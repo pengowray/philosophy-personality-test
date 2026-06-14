@@ -15,7 +15,9 @@
   CATS.forEach(function (c) { CAT_BY_KEY[c.key] = c; });
 
   var STORE_KEY = 'ppt_answers_v1';
+  var POS_KEY = 'ppt_pos_v1';
   var W_FIRM = 1.0, W_LEAN = 0.55;
+  var loadedFromShare = false;
 
   /* answers[id] = { sel: number | number[] | null, strength: 'lean'|'firm'|'agnostic' } */
   var answers = {};
@@ -34,9 +36,19 @@
   function save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(answers)); } catch (e) {}
   }
+  /* `#q5` / `#results` / `#intro` are routes; anything else in the hash is
+   * treated as a (legacy) base64 share blob. New share links use `?s=`. */
+  function isRoute(str) { return /^(intro|results|q\d+)$/.test(str); }
   function load() {
-    var fromHash = decodeState(location.hash.replace(/^#/, ''));
-    if (fromHash) { answers = fromHash; save(); return; }
+    var sParam = '';
+    try { sParam = new URLSearchParams(location.search).get('s') || ''; } catch (e) {}
+    var fromQuery = decodeState(sParam);
+    if (fromQuery) { answers = fromQuery; loadedFromShare = true; save(); return; }
+    var hash = location.hash.replace(/^#/, '');
+    if (hash && !isRoute(hash)) {
+      var fromHash = decodeState(hash);
+      if (fromHash) { answers = fromHash; loadedFromShare = true; save(); return; }
+    }
     try {
       var raw = localStorage.getItem(STORE_KEY);
       if (raw) answers = JSON.parse(raw) || {};
@@ -63,16 +75,57 @@
   }
 
   /* ============================================================ *
+   *  ROUTING  (hash-based, so the browser back/forward buttons work)
+   * ============================================================ */
+  function clampCur(i) { return Math.max(0, Math.min(QS.length - 1, i)); }
+
+  /* navigate: push (or replace) a hash route, then render it */
+  function go(hash, replace) {
+    if (hash.charAt(0) !== '#') hash = '#' + hash;
+    var url = location.pathname + location.search + hash;
+    try {
+      if (replace) history.replaceState({ h: hash }, '', url);
+      else history.pushState({ h: hash }, '', url);
+    } catch (e) {}
+    route();
+  }
+
+  /* render whatever the current hash points at */
+  function route() {
+    var hash = location.hash.replace(/^#/, '');
+    var m = /^q(\d+)$/.exec(hash);
+    if (hash === 'results') {
+      renderResults();
+    } else if (m) {
+      cur = clampCur(parseInt(m[1], 10) - 1);
+      show('quiz');
+      renderQuestion();
+    } else {
+      show('intro');
+      updateProgress();
+      updateResumeRow();
+    }
+  }
+  window.addEventListener('popstate', route);
+
+  /* ============================================================ *
    *  QUIZ
    * ============================================================ */
   function startQuiz() {
-    show('quiz');
-    cur = firstUnanswered();
-    renderQuestion();
+    go('#q' + (resumePos() + 1));
   }
   function firstUnanswered() {
     for (var i = 0; i < QS.length; i++) if (!answers[QS[i].id]) return i;
     return 0;
+  }
+  /* where "continue / resume" should land: the last question viewed,
+   * falling back to the first unanswered one */
+  function resumePos() {
+    try {
+      var p = parseInt(localStorage.getItem(POS_KEY), 10);
+      if (!isNaN(p)) return clampCur(p);
+    } catch (e) {}
+    return firstUnanswered();
   }
 
   function renderQuestion() {
@@ -80,6 +133,7 @@
     var cat = CAT_BY_KEY[q.cat];
     var a = answers[q.id];
     var host = el('qhost');
+    try { localStorage.setItem(POS_KEY, String(cur)); } catch (e) {}
 
     var optsHtml = q.opts.map(function (label, i) {
       var cls = 'opt';
@@ -113,6 +167,7 @@
           '<i style="background:' + cat.stroke + '"></i>' + esc(cat.name) + '</span>' +
         '<div class="qtopic">Q' + q.id + ' · ' + esc(q.topic) + '</div>' +
         '<h2 class="qtext">' + esc(q.q) + '</h2>' +
+        (q.detail ? '<p class="qdetail">' + esc(q.detail) + '</p>' : '') +
         '<p class="qhint">' + hint + '</p>' +
         '<div class="opts">' + optsHtml + '</div>' +
         '<div class="qextra">' +
@@ -166,14 +221,14 @@
     } else if (kind === 'skip') {
       goNext();
     } else if (kind === 'prev') {
-      if (cur > 0) { cur--; renderQuestion(); }
+      if (cur > 0) go('#q' + cur);            // cur-1 (0-based) → +1 for the 1-based hash
     } else if (kind === 'next') {
       goNext();
     }
   }
   function goNext() {
-    if (cur === QS.length - 1) { showResults(); return; }
-    cur++; renderQuestion();
+    if (cur === QS.length - 1) { go('#results'); return; }
+    go('#q' + (cur + 2));                      // next question, 1-based
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -350,7 +405,8 @@
   /* ============================================================ *
    *  RESULTS
    * ============================================================ */
-  function showResults() {
+  function renderResults() {
+    if (answeredCount() === 0) { go('#', true); return; }
     show('results');
     window.scrollTo(0, 0);
     var c = buildCtx();
@@ -574,14 +630,13 @@
     document.body.appendChild(a); a.click(); a.remove();
   }
   function share() {
-    var url = location.origin + location.pathname + '#' + encodeState();
+    var url = location.origin + location.pathname + '?s=' + encodeState() + '#results';
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(
         function () { flash('Shareable link copied to clipboard'); },
         function () { prompt('Copy your shareable link:', url); }
       );
     } else { prompt('Copy your shareable link:', url); }
-    try { history.replaceState(null, '', '#' + encodeState()); } catch (e) {}
   }
   function flash(msg) {
     var n = h('<div style="position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#1f1e1d;color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.25)">' + esc(msg) + '</div>');
@@ -601,8 +656,22 @@
     if (!confirm('Clear all your answers and start over?')) return;
     answers = {}; cur = 0;
     try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+    try { localStorage.removeItem(POS_KEY); } catch (e) {}
     try { history.replaceState(null, '', location.pathname); } catch (e) {}
-    show('intro'); updateProgress();
+    go('#', true);
+  }
+
+  /* the intro "you have N answers saved" row */
+  function updateResumeRow() {
+    var n = answeredCount();
+    var row = el('resumeRow');
+    if (!row) return;
+    if (n > 0) {
+      row.style.display = 'flex';
+      el('resumeText').textContent = n + ' answer' + (n === 1 ? '' : 's') + ' saved on this device.';
+    } else {
+      row.style.display = 'none';
+    }
   }
 
   function init() {
@@ -612,24 +681,29 @@
     el('startBtn').addEventListener('click', startQuiz);
     el('resultsTopBtn').addEventListener('click', function () {
       if (answeredCount() === 0) { flash('Answer a few questions first'); return; }
-      showResults();
+      go('#results');
     });
     el('resumeBtn').addEventListener('click', startQuiz);
 
-    el('btnRetake').addEventListener('click', function () { show('quiz'); cur = 0; renderQuestion(); window.scrollTo(0, 0); });
+    el('btnContinue').addEventListener('click', function () { go('#q' + (resumePos() + 1)); });
+    el('btnRetake').addEventListener('click', function () { go('#q1'); });
     el('btnReset').addEventListener('click', resetAll);
     el('btnSVG').addEventListener('click', downloadSVG);
     el('btnPNG').addEventListener('click', downloadPNG);
     el('btnShare').addEventListener('click', share);
     el('introReset').addEventListener('click', resetAll);
 
-    /* if a shared/saved result exists, surface a resume affordance */
-    if (answeredCount() > 0) {
-      el('resumeRow').style.display = 'flex';
-      el('resumeText').textContent = answeredCount() + ' answer' + (answeredCount() === 1 ? '' : 's') + ' saved on this device.';
+    updateResumeRow();
+
+    /* initial route. A shared link (?s=…) with enough answers jumps to
+     * results; otherwise honour any explicit #route, else show the intro. */
+    if (isRoute(location.hash.replace(/^#/, ''))) {
+      route();
+    } else if (loadedFromShare && answeredCount() >= 8) {
+      go('#results', true);
+    } else {
+      go('#intro', true);                       // also cleans any legacy base64 hash out of the URL
     }
-    /* if loaded from a shared hash with many answers, jump straight to results */
-    if (location.hash.length > 1 && answeredCount() >= 8) showResults();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

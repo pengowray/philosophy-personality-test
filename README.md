@@ -9,7 +9,10 @@ playful philosophical *archetype* — all client-side, no build step, no server.
 Open `index.html` in any modern browser. That's it.
 
 (Everything is plain HTML/CSS/JS with no dependencies. Your answers are stored only in
-`localStorage`; the "Copy shareable link" button encodes them into the URL hash.)
+`localStorage`; the "Copy shareable link" button encodes them into a `?s=` URL parameter.)
+
+The quiz is fully resumable: the URL hash routes to `#intro`, `#q<n>`, or `#results`, so the
+**browser back/forward buttons work**, and you can leave and **continue where you left off**.
 
 ## Files
 
@@ -17,7 +20,7 @@ Open `index.html` in any modern browser. That's it.
 |------|------------|
 | `index.html` | The three screens: intro, quiz, results. |
 | `styles.css` | Soft, banded-card styling echoing the example diagram. |
-| `questions.js` | All 100 questions, their answer options, and a 10-way thematic category map. |
+| `questions.js` | All 100 questions, their answer options, a plain-language `detail` explainer for each, and a 10-way thematic category map. |
 | `app.js` | Quiz flow, conviction-aware scoring, archetype logic, and the **results SVG generator**. |
 | `example/` | The reference diagram the results map is modelled on. |
 
