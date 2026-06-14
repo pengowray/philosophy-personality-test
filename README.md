@@ -49,8 +49,11 @@ matter, `S` skip.
 
 ## Results
 
-1. **Archetype** — e.g. *The Naturalist, The Kantian, The Utilitarian, The Existentialist,
-   The Pragmatist, The Skeptic, The Deflationist…* — chosen from your overall leanings.
+1. **Archetype** — picked from a gallery of 30-plus, e.g. *The Naturalist, The Kantian,
+   The Utilitarian, The Existentialist, The Pragmatist, The Skeptic, The Deflationist…*,
+   chosen from your overall leanings. Common archetypes score off the axes; niche ones
+   (*The Panpsychist, The Modal Realist, The Dialetheist, The Error Theorist…*) are gated
+   behind distinctive answer picks, so they only surface for a profile that earns them.
    *The Skeptic* falls out of heavy **agnostic** use (suspending judgment); *The Deflationist*
    from heavy **no-fact-of-the-matter** use (dissolving the questions).
 2. **Where you lean** — seven signed axes (physicalist↔non-physicalist, empiricist↔rationalist,
