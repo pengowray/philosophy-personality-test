@@ -39,21 +39,8 @@
   }
 
   /* ---------- persistence + sharing ---------- */
-  /* Persist to TWO places: localStorage and the URL's `?s=` param. The URL
-   * copy is the safety net — some browsers (seen in the wild outside Chrome)
-   * drop or freeze our localStorage between refreshes, but the address bar
-   * survives a reload, so the compact `?s=` blob restores full progress. */
   function save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(answers)); } catch (e) {}
-    syncUrl();
-  }
-  /* keep `?s=<compact>` in the URL in sync with `answers`, without disturbing
-   * the current route hash (so a refresh lands back on the same question) */
-  function syncUrl() {
-    try {
-      var qs = answeredCount() ? ('?s=' + encodeState()) : '';
-      history.replaceState(history.state, '', location.pathname + qs + (location.hash || ''));
-    } catch (e) {}
   }
   /* `#q5` / `#results` / `#intro` are routes; anything else in the hash is
    * treated as a (legacy) base64 share blob. New share links use `?s=`. */
@@ -66,10 +53,9 @@
       if (raw) local = JSON.parse(raw) || {};
     } catch (e) {}
 
-    /* `?s=` is authoritative: it's either your own just-saved state (always a
-     * superset of localStorage, since save() writes both together) or a share
-     * link you opened on purpose. Only adopt it when it actually carries answers
-     * — an empty blob must never wipe a good local copy. */
+    /* a `?s=` share link you opened on purpose adopts its answers as your own.
+     * Only when it actually carries answers — an empty blob must never wipe a
+     * good local copy. */
     var sParam = '';
     try { sParam = new URLSearchParams(location.search).get('s') || ''; } catch (e) {}
     var fromQuery = decodeState(sParam);
@@ -87,62 +73,87 @@
 
     answers = local || {};
   }
-  /* ---- compact share codec (v2) ----------------------------------------
-   * A share blob is `~` followed by per-question segments joined by `-`.
-   * Each segment is  <id><strength><options><but?> :
-   *   id        decimal question id
-   *   strength  l lean · f conviction · m multi/combo · a agnostic ·
-   *             n nofact · o other
-   *   options   one base36 digit per selected option
-   *             (l/f → one · m → one-or-more · a/n/o → none)
-   *   but       a trailing `~` marks a hedged ("…, but") answer
-   * e.g.  ~16f0-37m23~-14a-5o   (all chars are URL-safe, no escaping needed).
-   * Links made before v2 are a base64 JSON blob; decodeState falls back to
-   * that whenever the string doesn't start with the `~` sentinel. */
-  var STRENGTH_CODE = { lean: 'l', firm: 'f', agnostic: 'a', nofact: 'n', other: 'o' };
-  var CODE_STRENGTH = { l: 'lean', f: 'firm', m: 'firm', a: 'agnostic', n: 'nofact', o: 'other' };
-  function b36(n) { return n.toString(36); }
-  function unb36(ch) { return parseInt(ch, 36); }
+  /* ---- compact share codec --------------------------------------------
+   * A share blob is just per-question records concatenated, no separators:
+   *   <id><STRENGTH><options><B?>
+   *   id        decimal question id (always digits → starts each record)
+   *   STRENGTH  uppercase: L lean · F conviction · M multi/combo ·
+   *             A agnostic · N nofact · O other
+   *   options   one lowercase letter per selected option (a=0 … n=13)
+   *             (L/F → one · M → one-or-more · A/N/O → none)
+   *   B         a trailing uppercase B marks a hedged ("…, but") answer
+   * e.g.  16La50FlB37Mcdm14A5O   — looks like a plain token, all URL-safe.
+   * It's self-delimiting: ids are digits, payload is letters, so a digit
+   * always starts the next record. decodeState also still reads the older
+   * `~…` compact links and the original base64-JSON links. */
+  var STRENGTH_UP = { lean: 'L', firm: 'F', agnostic: 'A', nofact: 'N', other: 'O' };
+  var UP_STRENGTH = { L: 'lean', F: 'firm', M: 'firm', A: 'agnostic', N: 'nofact', O: 'other' };
+  function optChar(n) { return String.fromCharCode(97 + n); }     // 0 → 'a'
+  function optNum(ch) { return ch.charCodeAt(0) - 97; }           // 'a' → 0
 
   function encodeState() {
-    var segs = [];
+    var out = '';
     Object.keys(answers).forEach(function (id) {
       var a = answers[id];
       if (!a) return;
-      var code, payload = '';
+      var s, opts = '';
       if (Array.isArray(a.sel)) {
-        code = 'm'; payload = a.sel.map(b36).join('');
+        s = 'M'; opts = a.sel.map(optChar).join('');
       } else if (a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other') {
-        code = STRENGTH_CODE[a.strength];
+        s = STRENGTH_UP[a.strength];
       } else if (typeof a.sel === 'number') {
-        code = (a.strength === 'firm') ? 'f' : 'l'; payload = b36(a.sel);
+        s = (a.strength === 'firm') ? 'F' : 'L'; opts = optChar(a.sel);
       } else { return; }
-      segs.push(id + code + payload + (a.but ? '~' : ''));
+      out += id + s + opts + (a.but ? 'B' : '');
     });
-    return '~' + segs.join('-');
+    return out;
   }
-  function decodeCompact(str) {
-    var body = str.slice(1);                       // drop the `~` sentinel
+  function decodeCompactToken(str) {
+    var out = {}, consumed = 0;
+    var re = /(\d+)([LFMANO])([a-z]*)(B?)/g, m;
+    while ((m = re.exec(str))) {
+      if (m.index !== consumed) return null;       // a gap → not this format
+      consumed = re.lastIndex;
+      var id = m[1], s = m[2], opts = m[3], but = m[4] === 'B', a;
+      if (s === 'M') {
+        if (!opts.length) return null;
+        a = { sel: opts.split('').map(optNum), strength: 'firm' };
+      } else if (s === 'L' || s === 'F') {
+        if (opts.length !== 1) return null;
+        a = { sel: optNum(opts), strength: UP_STRENGTH[s] };
+      } else {
+        if (opts.length) return null;
+        a = { sel: null, strength: UP_STRENGTH[s] };
+      }
+      if (but) a.but = true;
+      out[id] = a;
+    }
+    if (consumed !== str.length) return null;       // trailing junk → reject
+    return out;
+  }
+  /* the previous `~`-delimited compact format — kept so links already copied
+   * in that shape still decode */
+  function decodeTilde(str) {
+    var body = str.slice(1), out = {};
     if (!body) return {};
-    var out = {};
-    var segs = body.split('-');
+    var segs = body.split('-'), CS = { l: 'lean', f: 'firm', m: 'firm', a: 'agnostic', n: 'nofact', o: 'other' };
     for (var i = 0; i < segs.length; i++) {
       var seg = segs[i];
       if (!seg) continue;
       var but = false;
       if (seg.charAt(seg.length - 1) === '~') { but = true; seg = seg.slice(0, -1); }
       var m = /^(\d+)([lfmano])(.*)$/.exec(seg);
-      if (!m) return null;                          // malformed → not a v2 blob
+      if (!m) return null;
       var id = m[1], code = m[2], rest = m[3], a;
       if (code === 'm') {
-        var sels = rest.split('').map(unb36).filter(function (n) { return !isNaN(n); });
+        var sels = rest.split('').map(function (c) { return parseInt(c, 36); }).filter(function (n) { return !isNaN(n); });
         if (!sels.length) return null;
         a = { sel: sels, strength: 'firm' };
       } else if (code === 'l' || code === 'f') {
         if (!rest.length) return null;
-        a = { sel: unb36(rest.charAt(0)), strength: CODE_STRENGTH[code] };
+        a = { sel: parseInt(rest.charAt(0), 36), strength: CS[code] };
       } else {
-        a = { sel: null, strength: CODE_STRENGTH[code] };
+        a = { sel: null, strength: CS[code] };
       }
       if (but) a.but = true;
       out[id] = a;
@@ -151,8 +162,12 @@
   }
   function decodeState(str) {
     if (!str) return null;
-    if (str.charAt(0) === '~') return decodeCompact(str);   // v2 compact
-    try {                                                    // legacy base64 JSON
+    if (str.charAt(0) === '~') return decodeTilde(str);            // older compact
+    if (/^\d/.test(str)) {                                         // current compact token
+      var tok = decodeCompactToken(str);
+      if (tok) return tok;
+    }
+    try {                                                          // original base64 JSON
       var obj = JSON.parse(decodeURIComponent(escape(atob(str))));
       return (obj && typeof obj === 'object') ? obj : null;
     } catch (e) { return null; }
@@ -1336,6 +1351,23 @@
       );
     } else { prompt('Copy your shareable link:', url); }
   }
+
+  /* restore a saved/shared link as your OWN answers (a deliberate, rare act —
+   * distinct from the session-only "compare with a friend" paste) */
+  function promptImport() {
+    var text = prompt('Paste a saved or shared link (or just its code) to load it as your own answers.\nThis replaces your current answers on this device.');
+    if (text == null) return;                       // cancelled
+    var parsed = parseShareLink(text);
+    if (!parsed || !Object.keys(parsed).length) { flash('That link didn’t carry any answers.'); return; }
+    var have = answeredCount(), got = Object.keys(parsed).length;
+    if (have && !confirm('Replace your ' + have + ' saved answer' + (have === 1 ? '' : 's') +
+        ' with the ' + got + ' from this link?')) return;
+    answers = parsed; cur = 0;
+    save();
+    try { localStorage.removeItem(POS_KEY); } catch (e) {}
+    go('#results', true);
+    flash('Loaded ' + got + ' answer' + (got === 1 ? '' : 's') + ' from the link.');
+  }
   function flash(msg) {
     var n = h('<div style="position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#1f1e1d;color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.25)">' + esc(msg) + '</div>');
     document.body.appendChild(n);
@@ -1414,7 +1446,6 @@
 
   function init() {
     load();
-    syncUrl();             // stamp `?s=` immediately, even when loaded from localStorage
     initTheme();
     updateProgress();
 
@@ -1424,6 +1455,8 @@
       go('#results');
     });
     el('resumeBtn').addEventListener('click', startQuiz);
+    var restoreBtn = el('restoreBtn');
+    if (restoreBtn) restoreBtn.addEventListener('click', promptImport);
 
     el('btnContinue').addEventListener('click', function () { go('#q' + (resumePos() + 1)); });
     el('btnRetake').addEventListener('click', function () { go('#q1'); });
