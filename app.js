@@ -18,11 +18,14 @@
   var POS_KEY = 'ppt_pos_v1';
   var THEME_KEY = 'ppt_theme';
   var W_FIRM = 1.0, W_LEAN = 0.55, W_NF = 0.6;   // W_NF: weight of an inferred "no fact of the matter" lean
+  var W_BUT = 0.8;   // a hedged ("…, but") answer counts for a little less
   var loadedFromShare = false;
   var friendAnswers = null;   // a friend's decoded answers, pasted on the results page (session only)
   var theme = 'light';   // 'light' | 'dark' — reconciled in initTheme()
 
-  /* answers[id] = { sel: number | number[] | null, strength: 'lean'|'firm'|'agnostic' } */
+  /* answers[id] = { sel: number | number[] | null,
+   *                 strength: 'lean'|'firm'|'agnostic'|'nofact'|'other',
+   *                 but?: true }   // `but` = held with reservations (down-weighted) */
   var answers = {};
   var cur = 0;
 
@@ -57,13 +60,72 @@
       if (raw) answers = JSON.parse(raw) || {};
     } catch (e) { answers = {}; }
   }
+  /* ---- compact share codec (v2) ----------------------------------------
+   * A share blob is `~` followed by per-question segments joined by `-`.
+   * Each segment is  <id><strength><options><but?> :
+   *   id        decimal question id
+   *   strength  l lean · f conviction · m multi/combo · a agnostic ·
+   *             n nofact · o other
+   *   options   one base36 digit per selected option
+   *             (l/f → one · m → one-or-more · a/n/o → none)
+   *   but       a trailing `~` marks a hedged ("…, but") answer
+   * e.g.  ~16f0-37m23~-14a-5o   (all chars are URL-safe, no escaping needed).
+   * Links made before v2 are a base64 JSON blob; decodeState falls back to
+   * that whenever the string doesn't start with the `~` sentinel. */
+  var STRENGTH_CODE = { lean: 'l', firm: 'f', agnostic: 'a', nofact: 'n', other: 'o' };
+  var CODE_STRENGTH = { l: 'lean', f: 'firm', m: 'firm', a: 'agnostic', n: 'nofact', o: 'other' };
+  function b36(n) { return n.toString(36); }
+  function unb36(ch) { return parseInt(ch, 36); }
+
   function encodeState() {
-    try { return btoa(unescape(encodeURIComponent(JSON.stringify(answers)))); }
-    catch (e) { return ''; }
+    var segs = [];
+    Object.keys(answers).forEach(function (id) {
+      var a = answers[id];
+      if (!a) return;
+      var code, payload = '';
+      if (Array.isArray(a.sel)) {
+        code = 'm'; payload = a.sel.map(b36).join('');
+      } else if (a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other') {
+        code = STRENGTH_CODE[a.strength];
+      } else if (typeof a.sel === 'number') {
+        code = (a.strength === 'firm') ? 'f' : 'l'; payload = b36(a.sel);
+      } else { return; }
+      segs.push(id + code + payload + (a.but ? '~' : ''));
+    });
+    return '~' + segs.join('-');
+  }
+  function decodeCompact(str) {
+    var body = str.slice(1);                       // drop the `~` sentinel
+    if (!body) return {};
+    var out = {};
+    var segs = body.split('-');
+    for (var i = 0; i < segs.length; i++) {
+      var seg = segs[i];
+      if (!seg) continue;
+      var but = false;
+      if (seg.charAt(seg.length - 1) === '~') { but = true; seg = seg.slice(0, -1); }
+      var m = /^(\d+)([lfmano])(.*)$/.exec(seg);
+      if (!m) return null;                          // malformed → not a v2 blob
+      var id = m[1], code = m[2], rest = m[3], a;
+      if (code === 'm') {
+        var sels = rest.split('').map(unb36).filter(function (n) { return !isNaN(n); });
+        if (!sels.length) return null;
+        a = { sel: sels, strength: 'firm' };
+      } else if (code === 'l' || code === 'f') {
+        if (!rest.length) return null;
+        a = { sel: unb36(rest.charAt(0)), strength: CODE_STRENGTH[code] };
+      } else {
+        a = { sel: null, strength: CODE_STRENGTH[code] };
+      }
+      if (but) a.but = true;
+      out[id] = a;
+    }
+    return out;
   }
   function decodeState(str) {
     if (!str) return null;
-    try {
+    if (str.charAt(0) === '~') return decodeCompact(str);   // v2 compact
+    try {                                                    // legacy base64 JSON
       var obj = JSON.parse(decodeURIComponent(escape(atob(str))));
       return (obj && typeof obj === 'object') ? obj : null;
     } catch (e) { return null; }
@@ -138,7 +200,7 @@
     var cc = catColors(cat);
     var a = answers[q.id];
     var host = el('qhost');
-    var nonpos = a && (a.strength === 'agnostic' || a.strength === 'nofact');
+    var nonpos = a && (a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other');
     try { localStorage.setItem(POS_KEY, String(cur)); } catch (e) {}
 
     var optsHtml = q.opts.map(function (label, i) {
@@ -171,6 +233,8 @@
 
     var agnosticOn = a && a.strength === 'agnostic';
     var nofactOn = a && a.strength === 'nofact';
+    var otherOn = a && a.strength === 'other';
+    var butOn = a && a.but;
     var isLast = cur === QS.length - 1;
 
     host.innerHTML =
@@ -185,6 +249,8 @@
         '<div class="qextra">' +
           '<button class="chip ' + (agnosticOn ? 'on' : '') + '" data-act="agnostic">Agnostic / undecided</button>' +
           '<button class="chip ' + (nofactOn ? 'on' : '') + '" data-act="nofact" title="A distinct stance: the question has no determinate answer — not that you are unsure, but that there is nothing to be right about.">No fact of the matter</button>' +
+          '<button class="chip ' + (otherOn ? 'on' : '') + '" data-act="other" title="None of these — some other position not captured by the options here.">Other</button>' +
+          '<button class="chip but ' + (butOn ? 'on' : '') + '" data-act="but" title="Keep your pick(s), but with reservations — it counts for a little less.">…but</button>' +
           '<button class="chip" data-act="skip">Skip ›</button>' +
           '<span class="spacer"></span>' +
         '</div>' +
@@ -208,6 +274,14 @@
    * toggle several options on; single questions cycle lean → conviction → off. */
   function isMulti(q) { return !!(q.multi || q.combo); }
 
+  /* set a fresh answer, carrying over a sticky "…, but" flag from whatever
+   * was there before (so hedging survives changing or refining your pick) */
+  function setAnswer(id, a) {
+    var prev = answers[id];
+    if (prev && prev.but) a.but = true;
+    answers[id] = a;
+  }
+
   function chooseOption(optIndex) {
     var q = QS[cur];
     var a = answers[q.id];
@@ -216,14 +290,14 @@
       var set = prev.slice();
       var at = set.indexOf(optIndex);
       if (at === -1) set.push(optIndex); else set.splice(at, 1);
-      if (set.length) answers[q.id] = { sel: set.sort(function (x, y) { return x - y; }), strength: 'firm' };
+      if (set.length) setAnswer(q.id, { sel: set.sort(function (x, y) { return x - y; }), strength: 'firm' });
       else delete answers[q.id];
     } else {
-      if (a && a.strength !== 'agnostic' && a.strength !== 'nofact' && a.sel === optIndex) {
+      if (a && a.strength !== 'agnostic' && a.strength !== 'nofact' && a.strength !== 'other' && a.sel === optIndex) {
         if (a.strength === 'lean') a.strength = 'firm';
         else delete answers[q.id];                 // firm -> off
       } else {
-        answers[q.id] = { sel: optIndex, strength: 'lean' };
+        setAnswer(q.id, { sel: optIndex, strength: 'lean' });
       }
     }
     save();
@@ -234,12 +308,22 @@
     var q = QS[cur];
     if (kind === 'agnostic') {
       if (answers[q.id] && answers[q.id].strength === 'agnostic') delete answers[q.id];
-      else answers[q.id] = { sel: null, strength: 'agnostic' };
+      else setAnswer(q.id, { sel: null, strength: 'agnostic' });
       save(); renderQuestion();
     } else if (kind === 'nofact') {
       if (answers[q.id] && answers[q.id].strength === 'nofact') delete answers[q.id];
-      else answers[q.id] = { sel: null, strength: 'nofact' };
+      else setAnswer(q.id, { sel: null, strength: 'nofact' });
       save(); renderQuestion();
+    } else if (kind === 'other') {
+      if (answers[q.id] && answers[q.id].strength === 'other') delete answers[q.id];
+      else setAnswer(q.id, { sel: null, strength: 'other' });
+      save(); renderQuestion();
+    } else if (kind === 'but') {
+      /* a modifier, not a stance: it only attaches to an existing answer */
+      var ab = answers[q.id];
+      if (ab) { if (ab.but) delete ab.but; else ab.but = true; save(); }
+      else flash('Pick an answer first, then add “…but”.');
+      renderQuestion();
     } else if (kind === 'skip') {
       goNext();
     } else if (kind === 'prev') {
@@ -275,6 +359,8 @@
     else if (e.key === 'ArrowLeft') { act('prev'); e.preventDefault(); }
     else if (e.key.toLowerCase() === 'a') { act('agnostic'); e.preventDefault(); }
     else if (e.key.toLowerCase() === 'f') { act('nofact'); e.preventDefault(); }
+    else if (e.key.toLowerCase() === 'o') { act('other'); e.preventDefault(); }
+    else if (e.key.toLowerCase() === 'b') { act('but'); e.preventDefault(); }
     else if (e.key.toLowerCase() === 's') { act('skip'); e.preventDefault(); }
   });
 
@@ -365,12 +451,15 @@
     var sum = 0, wsum = 0, n = 0;
     spec.items.forEach(function (it) {
       var a = src[it.q];
-      if (!a || a.strength === 'agnostic') return;
+      /* "other" is a positionless stance (like agnostic): it carries no
+       * directional loading, so it sits out the axis entirely. */
+      if (!a || a.strength === 'agnostic' || a.strength === 'other') return;
       /* "no fact of the matter" only counts on items that carry an `nf` loading
        * (i.e. where it implies a side); elsewhere it's neutral, like agnostic. */
       if (a.strength === 'nofact') {
         if (typeof it.nf !== 'number') return;
         var nw = (typeof it.nfw === 'number') ? it.nfw : W_NF;   // per-item weight for shakier mappings
+        if (a.but) nw *= W_BUT;
         sum += it.nf * nw; wsum += nw; n++;
         return;
       }
@@ -382,6 +471,7 @@
       sels.forEach(function (s) { if (it.m.hasOwnProperty(s)) { mapped += it.m[s]; mn++; } });
       if (!mn) return;
       var w = a.strength === 'firm' ? W_FIRM : W_LEAN;
+      if (a.but) w *= W_BUT;                       // hedged → counts for a little less
       sum += (mapped / mn) * w; wsum += w; n++;
     });
     return { key: spec.key, left: spec.left, right: spec.right, n: n, value: wsum ? sum / wsum : null };
@@ -404,14 +494,14 @@
        * single, combination and list-style answers (but not agnostic/no-fact). */
       is: function (id, idx) {
         var a = answers[id];
-        if (!a || a.strength === 'agnostic' || a.strength === 'nofact') return false;
+        if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other') return false;
         return isPick(id, idx);
       },
       /* like `is`, but a position held as one of several picks counts only
        * fractionally — so a 1-of-3 combo doesn't earn a full single-pick bonus. */
       share: function (id, idx) {
         var a = answers[id];
-        if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || !isPick(id, idx)) return 0;
+        if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other' || !isPick(id, idx)) return 0;
         return 1 / (Array.isArray(a.sel) ? a.sel.length : 1);
       },
       multiCount: multiCount,
@@ -662,14 +752,16 @@
   function positionTextFor(q, src) {
     var a = src[q.id];
     if (!a) return null;
-    if (a.strength === 'agnostic') return { text: 'Agnostic / undecided', strength: 'agnostic' };
-    if (a.strength === 'nofact') return { text: 'No fact of the matter', strength: 'nofact' };
-    if (Array.isArray(a.sel)) return { text: a.sel.map(function (i) { return q.opts[i]; }).join(', '), strength: 'multi' };
-    return { text: q.opts[a.sel], strength: a.strength };
+    var but = !!a.but;
+    if (a.strength === 'agnostic') return { text: 'Agnostic / undecided', strength: 'agnostic', but: but };
+    if (a.strength === 'nofact') return { text: 'No fact of the matter', strength: 'nofact', but: but };
+    if (a.strength === 'other') return { text: 'Other', strength: 'other', but: but };
+    if (Array.isArray(a.sel)) return { text: a.sel.map(function (i) { return q.opts[i]; }).join(', '), strength: 'multi', but: but };
+    return { text: q.opts[a.sel], strength: a.strength, but: but };
   }
   function positionText(q) { return positionTextFor(q, answers); }
 
-  var STRENGTH_LABEL = { firm: 'Conviction', lean: 'Leaning', agnostic: 'Agnostic', nofact: 'No fact', multi: 'Selected' };
+  var STRENGTH_LABEL = { firm: 'Conviction', lean: 'Leaning', agnostic: 'Agnostic', nofact: 'No fact', other: 'Other', multi: 'Selected' };
 
   function renderBreakdown() {
     return CATS.map(function (cat) {
@@ -681,10 +773,12 @@
         if (!p) return '<div class="cell empty"><div class="t">' + topic + '</div><div class="v">—</div></div>';
         var sclass = p.strength === 'firm' ? 's-firm'
           : (p.strength === 'agnostic' ? 's-agno'
-          : (p.strength === 'nofact' ? 's-nofact' : 's-lean'));
+          : (p.strength === 'nofact' ? 's-nofact'
+          : (p.strength === 'other' ? 's-other' : 's-lean')));
         return '<div class="cell"><div class="t">' + topic + '</div>' +
           '<div class="v" style="color:' + cc.text + '">' + esc(p.text) + '</div>' +
-          '<span class="s ' + sclass + '">' + STRENGTH_LABEL[p.strength] + '</span>' +
+          '<span class="s ' + sclass + '">' + STRENGTH_LABEL[p.strength] +
+            (p.but ? '<span class="s-but"> · but</span>' : '') + '</span>' +
           renderSpread(q, cc) + '</div>';
       }).join('');
       return '<div class="cat-block">' +
@@ -703,7 +797,7 @@
   /* the option indices the user picked (empty for agnostic / no-fact / skip) */
   function selIndices(id) {
     var a = answers[id];
-    if (!a || a.strength === 'agnostic' || a.strength === 'nofact') return [];
+    if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other') return [];
     if (Array.isArray(a.sel)) return a.sel;
     if (typeof a.sel === 'number') return [a.sel];
     return [];
@@ -774,7 +868,7 @@
     var rows = [];
     QS.forEach(function (q) {
       var a = answers[q.id];
-      if (!a || a.strength === 'agnostic' || a.strength === 'nofact') return;
+      if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other') return;
       var d = surveyFor(q.id);
       if (!d || !d.p) return;                       // single & combo questions only
       var sels = selIndices(q.id);
@@ -866,6 +960,7 @@
     if (!a) return null;
     if (a.strength === 'agnostic') return { kind: 'agnostic', sels: [] };
     if (a.strength === 'nofact') return { kind: 'nofact', sels: [] };
+    if (a.strength === 'other') return { kind: 'other', sels: [] };
     var sels = Array.isArray(a.sel) ? a.sel.slice() : (typeof a.sel === 'number' ? [a.sel] : []);
     if (!sels.length) return null;
     return { kind: 'pos', sels: sels };
@@ -1054,8 +1149,8 @@
   /* per-card colours on the profile SVG, by conviction strength */
   function cardStyle(strength, cat) {
     var dark = theme === 'dark';
-    if (strength === 'agnostic' || strength === 'nofact') {
-      var tag = strength === 'nofact' ? 'No fact' : 'Open';
+    if (strength === 'agnostic' || strength === 'nofact' || strength === 'other') {
+      var tag = strength === 'nofact' ? 'No fact' : (strength === 'other' ? 'Other' : 'Open');
       return dark
         ? { fill: '#232019', stroke: '#3a352c', title: '#b9b3a8', text: '#8b857a', tag: tag }
         : { fill: '#f3f2ef', stroke: '#d8d2c6', title: '#6b6760', text: '#8a857c', tag: tag };
