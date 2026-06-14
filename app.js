@@ -19,6 +19,7 @@
   var THEME_KEY = 'ppt_theme';
   var W_FIRM = 1.0, W_LEAN = 0.55, W_NF = 0.6;   // W_NF: weight of an inferred "no fact of the matter" lean
   var loadedFromShare = false;
+  var friendAnswers = null;   // a friend's decoded answers, pasted on the results page (session only)
   var theme = 'light';   // 'light' | 'dark' — reconciled in initTheme()
 
   /* answers[id] = { sel: number | number[] | null, strength: 'lean'|'firm'|'agnostic' } */
@@ -331,10 +332,11 @@
       ] }
   ];
 
-  function computeAxis(spec) {
+  function computeAxis(spec, src) {
+    src = src || answers;
     var sum = 0, wsum = 0, n = 0;
     spec.items.forEach(function (it) {
-      var a = answers[it.q];
+      var a = src[it.q];
       if (!a || a.strength === 'agnostic') return;
       /* "no fact of the matter" only counts on items that carry an `nf` loading
        * (i.e. where it implies a side); elsewhere it's neutral, like agnostic. */
@@ -356,7 +358,7 @@
     });
     return { key: spec.key, left: spec.left, right: spec.right, n: n, value: wsum ? sum / wsum : null };
   }
-  function computeAxes() { return AXES.map(computeAxis); }
+  function computeAxes(src) { return AXES.map(function (s) { return computeAxis(s, src); }); }
 
   /* ============================================================ *
    *  ARCHETYPE
@@ -490,6 +492,9 @@
     var svg = buildProfileSVG();
     el('svgHost').innerHTML = svg;
 
+    /* compare with a friend (if one's link has been pasted) */
+    mountFriendCompare();
+
     /* how you compare with the profession */
     var cmp = el('compare');
     if (cmp) cmp.innerHTML = renderCompare();
@@ -519,14 +524,15 @@
     '</div>';
   }
 
-  function positionText(q) {
-    var a = answers[q.id];
+  function positionTextFor(q, src) {
+    var a = src[q.id];
     if (!a) return null;
     if (a.strength === 'agnostic') return { text: 'Agnostic / undecided', strength: 'agnostic' };
     if (a.strength === 'nofact') return { text: 'No fact of the matter', strength: 'nofact' };
     if (Array.isArray(a.sel)) return { text: a.sel.map(function (i) { return q.opts[i]; }).join(', '), strength: 'multi' };
     return { text: q.opts[a.sel], strength: a.strength };
   }
+  function positionText(q) { return positionTextFor(q, answers); }
 
   var STRENGTH_LABEL = { firm: 'Conviction', lean: 'Leaning', agnostic: 'Agnostic', nofact: 'No fact', multi: 'Selected' };
 
@@ -675,6 +681,187 @@
         'These are the survey’s “accept or lean toward” figures, so a question’s bars can total a little over 100%. ' +
         'Hover a bar to read each option.</p>' +
       '</div>';
+  }
+
+  /* ============================================================ *
+   *  COMPARE WITH A FRIEND
+   *  Paste a friend's share link; we decode their answers (the same
+   *  base64 blob our own share links carry) and show where the two
+   *  of you line up and where you part ways. Session-only — a friend's
+   *  answers are never written to storage and never touch `answers`.
+   * ============================================================ */
+
+  /* pull the share blob out of whatever the user pasted — a full URL
+   * (`?s=…` or a legacy `#<blob>`) or a bare base64 string — and decode it */
+  function parseShareLink(text) {
+    text = String(text || '').trim();
+    if (!text) return null;
+    var blob = '';
+    var m = text.match(/[?&]s=([^&#\s]+)/);
+    if (m) {
+      blob = m[1];
+    } else {
+      var hm = text.match(/#([^#\s]+)\s*$/);
+      blob = (hm && !isRoute(hm[1])) ? hm[1] : text;
+    }
+    if (blob.indexOf('%') !== -1) { try { blob = decodeURIComponent(blob); } catch (e) {} }
+    return decodeState(blob);
+  }
+
+  /* normalise one person's answer to a question into a comparable shape */
+  function posInfo(src, id) {
+    var a = src[id];
+    if (!a) return null;
+    if (a.strength === 'agnostic') return { kind: 'agnostic', sels: [] };
+    if (a.strength === 'nofact') return { kind: 'nofact', sels: [] };
+    var sels = Array.isArray(a.sel) ? a.sel.slice() : (typeof a.sel === 'number' ? [a.sel] : []);
+    if (!sels.length) return null;
+    return { kind: 'pos', sels: sels };
+  }
+
+  /* one row per question both people took a position on */
+  function friendRows() {
+    if (!friendAnswers) return [];
+    var rows = [];
+    QS.forEach(function (q) {
+      var mine = posInfo(answers, q.id), theirs = posInfo(friendAnswers, q.id);
+      if (!mine || !theirs) return;
+      var score, kind;
+      if (mine.kind !== 'pos' || theirs.kind !== 'pos') {
+        /* agnostic / no-fact only match the very same stance */
+        score = (mine.kind === theirs.kind) ? 1 : 0;
+        kind = score ? 'agree' : 'disagree';
+      } else {
+        /* overlap of selected options (Jaccard) — exact for single answers,
+         * graded for combination / list-style ones */
+        var inter = mine.sels.filter(function (i) { return theirs.sels.indexOf(i) !== -1; }).length;
+        var uni = mine.sels.slice();
+        theirs.sels.forEach(function (i) { if (uni.indexOf(i) === -1) uni.push(i); });
+        score = uni.length ? inter / uni.length : 0;
+        kind = score === 1 ? 'agree' : (score > 0 ? 'partial' : 'disagree');
+      }
+      rows.push({ q: q, score: score, kind: kind });
+    });
+    return rows;
+  }
+
+  function leanLabel(ax) {
+    if (ax.value == null) return 'no data';
+    var mag = Math.abs(ax.value);
+    if (mag < 0.05) return 'balanced';
+    var strength = mag > 0.66 ? 'strongly' : (mag > 0.3 ? 'clearly' : 'slightly');
+    return strength + ' ' + (ax.value < 0 ? ax.left : ax.right).toLowerCase();
+  }
+
+  /* one axis track carrying both dots */
+  function renderAxisPair(me, fr) {
+    if (me.value == null && fr.value == null) return '';
+    function pct(v) { return (v + 1) / 2 * 100; }
+    var dots = '';
+    if (me.value != null) dots += '<span class="axis-dot me" style="left:' + pct(me.value) + '%"></span>';
+    if (fr.value != null) dots += '<span class="axis-dot friend" style="left:' + pct(fr.value) + '%"></span>';
+    return '<div class="axis">' +
+      '<div class="axis-ends"><span>' + esc(me.left) + '</span><span>' + esc(me.right) + '</span></div>' +
+      '<div class="axis-track"><span class="mid"></span>' + dots + '</div>' +
+      '<div class="axis-meta"><span class="who me">You</span> ' + esc(leanLabel(me)) +
+        ' · <span class="who friend">Friend</span> ' + esc(leanLabel(fr)) + '</div>' +
+    '</div>';
+  }
+
+  function renderFriendInput() {
+    return '<div class="friend-card">' +
+      '<p class="friend-lead">Has a friend taken the test too? Paste the link they made with ' +
+        '“🔗 Copy shareable link” and see where the two of you agree — and where you part ways. ' +
+        'Their answers stay in your browser and aren’t saved.</p>' +
+      '<div class="friend-input-row">' +
+        '<input id="friendLink" type="text" inputmode="url" autocomplete="off" spellcheck="false" ' +
+          'placeholder="Paste your friend’s share link…" />' +
+        '<button id="friendGo" class="btn btn-primary">Compare</button>' +
+      '</div>' +
+      '<div id="friendErr" class="friend-err" role="alert"></div>' +
+    '</div>';
+  }
+
+  function renderFriendComparison() {
+    var rows = friendRows();
+    var clearBtn = '<button id="friendClear" class="link-btn">Compare a different link ›</button>';
+    if (!rows.length) {
+      return '<div class="friend-card">' +
+        '<p class="friend-lead">You and your friend haven’t taken a position on any of the same questions yet, ' +
+          'so there’s nothing to line up. ' + clearBtn + '</p></div>';
+    }
+    var n = rows.length;
+    var agree = rows.filter(function (r) { return r.kind === 'agree'; }).length;
+    var partial = rows.filter(function (r) { return r.kind === 'partial'; }).length;
+    var disagree = rows.filter(function (r) { return r.kind === 'disagree'; }).length;
+    var avg = Math.round(rows.reduce(function (s, r) { return s + r.score; }, 0) / n * 100);
+
+    var me = computeAxes(answers), fr = computeAxes(friendAnswers);
+    var axesHtml = me.map(function (a, i) { return renderAxisPair(a, fr[i]); }).filter(Boolean).join('');
+
+    var diffRows = rows.filter(function (r) { return r.kind !== 'agree'; })
+      .sort(function (a, b) { return a.score - b.score; }).slice(0, 6);
+    var agreeRows = rows.filter(function (r) { return r.kind === 'agree'; }).slice(0, 6);
+
+    function diffLine(r) {
+      return '<li class="friend-diff">' +
+        '<span class="ct">' + esc(r.q.topic) + '</span>' +
+        '<span class="fb"><span class="who me">You</span> ' + esc(positionTextFor(r.q, answers).text) + '</span>' +
+        '<span class="fb"><span class="who friend">Them</span> ' + esc(positionTextFor(r.q, friendAnswers).text) + '</span>' +
+      '</li>';
+    }
+    function agreeLine(r) {
+      return '<li><span class="ct">' + esc(r.q.topic) + '</span>' +
+        '<span class="cp">' + esc(positionTextFor(r.q, answers).text) + '</span></li>';
+    }
+
+    var partBit = partial ? ', partly overlap on <b>' + partial + '</b>' : '';
+    return '<div class="friend-card">' +
+      '<p class="friend-lead">You and your friend both took a position on <b>' + n + '</b> question' + (n === 1 ? '' : 's') + '. ' +
+        'You fully agree on <b>' + agree + '</b>' + partBit + ', and differ on <b>' + disagree + '</b> — ' +
+        'about <b>' + avg + '%</b> answer overlap overall.</p>' +
+      '<div class="friend-legend"><span class="who me">You</span><span class="who friend">Your friend</span>' +
+        clearBtn + '</div>' +
+      (axesHtml ? '<div class="friend-subtitle">Where you each lean</div><div class="axes">' + axesHtml + '</div>' : '') +
+      '<div class="compare-cols" style="margin-top:18px">' +
+        '<div class="compare-col"><h4>Where you differ most</h4><ul>' +
+          (diffRows.length ? diffRows.map(diffLine).join('')
+            : '<li><span class="cp">No disagreements — you match everywhere you both answered.</span></li>') +
+        '</ul></div>' +
+        '<div class="compare-col"><h4>Where you agree</h4><ul>' +
+          (agreeRows.length ? agreeRows.map(agreeLine).join('')
+            : '<li><span class="cp">No exact matches yet.</span></li>') +
+        '</ul></div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function doFriendCompare() {
+    var inp = el('friendLink');
+    var parsed = parseShareLink(inp ? inp.value : '');
+    var err = el('friendErr');
+    if (!parsed) {
+      if (err) err.textContent = 'That doesn’t look like a share link — paste the whole link your friend copied.';
+      return;
+    }
+    if (!Object.keys(parsed).length) {
+      if (err) err.textContent = 'That link doesn’t carry any answers.';
+      return;
+    }
+    friendAnswers = parsed;
+    mountFriendCompare();
+  }
+
+  function mountFriendCompare() {
+    var host = el('friendCompare');
+    if (!host) return;
+    host.innerHTML = friendAnswers ? renderFriendComparison() : renderFriendInput();
+    var go = el('friendGo');
+    if (go) go.addEventListener('click', doFriendCompare);
+    var inp = el('friendLink');
+    if (inp) inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); doFriendCompare(); } });
+    var clr = el('friendClear');
+    if (clr) clr.addEventListener('click', function () { friendAnswers = null; mountFriendCompare(); });
   }
 
   /* ============================================================ *

@@ -25,6 +25,7 @@
   --accent-border: #d9d4f6;
   --accent-ink: #3c3489;
   --good: #0f6e56;
+  --friend: #d97a26;
 
   --code-bg: #f1efe9;
   --opt-bg: #fcfbf9;
@@ -70,6 +71,7 @@
   --accent-border: #3a3463;
   --accent-ink: #cfcaf6;
   --good: #46c79a;
+  --friend: #f0a653;
 
   --code-bg: #211e18;
   --opt-bg: #1b1916;
@@ -314,6 +316,57 @@ h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.08; margin: 0 0 14px; let
 .compare-col .ct { font-weight: 600; font-size: 14px; }
 .compare-col .cp { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
 .compare-note { font-size: 12px; color: var(--ink-faint); line-height: 1.6; margin: 16px 0 0; }
+
+/* ---- compare with a friend ---- */
+.friend-card {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+  padding: 20px 22px; box-shadow: var(--shadow);
+}
+.friend-lead { font-size: 16px; line-height: 1.6; margin: 0 0 14px; color: var(--ink-soft); }
+.friend-lead b { color: var(--ink); }
+.friend-input-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.friend-input-row input {
+  flex: 1; min-width: 200px; font-family: inherit; font-size: 15px; color: var(--ink);
+  background: var(--opt-bg); border: 1.5px solid var(--border-strong); border-radius: 11px; padding: 12px 14px;
+  transition: border-color .12s, box-shadow .12s;
+}
+.friend-input-row input:focus { outline: none; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.friend-input-row .btn { flex: none; }
+.friend-err { color: #c0392b; font-size: 13px; margin-top: 8px; }
+[data-theme="dark"] .friend-err { color: #ff8a7a; }
+
+.friend-legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 6px 0 16px; }
+.friend-legend .link-btn { margin-left: auto; }
+.friend-subtitle {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint);
+  font-weight: 700; margin: 6px 0 12px;
+}
+
+/* the small colour-dot "You" / "Friend" labels reused on legend, axes and diff lines */
+.who {
+  position: relative; padding-left: 17px; font-size: 11.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); white-space: nowrap;
+}
+.who::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 11px; height: 11px; border-radius: 50%;
+}
+.who.me::before { background: var(--accent); }
+.who.friend::before { background: var(--friend); }
+
+/* both people's dots share one axis track */
+.axis-dot.me { background: var(--accent); }
+.axis-dot.friend { background: var(--friend); width: 16px; height: 16px; }
+
+.friend-diff {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 9px 0; border-bottom: 1px dashed var(--border);
+}
+.friend-diff:last-child { border-bottom: 0; }
+.friend-diff .ct { font-weight: 600; font-size: 14px; }
+.friend-diff .fb { font-size: 13px; color: var(--ink-soft); display: flex; gap: 8px; align-items: baseline; }
+.friend-diff .fb .who { font-size: 10px; padding-left: 15px; flex: none; }
+.friend-diff .fb .who::before { width: 9px; height: 9px; }
 
 @media (max-width: 560px) {
   .compare-cols { grid-template-columns: 1fr; }
