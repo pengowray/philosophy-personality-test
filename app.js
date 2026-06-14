@@ -16,8 +16,10 @@
 
   var STORE_KEY = 'ppt_answers_v1';
   var POS_KEY = 'ppt_pos_v1';
+  var THEME_KEY = 'ppt_theme';
   var W_FIRM = 1.0, W_LEAN = 0.55;
   var loadedFromShare = false;
+  var theme = 'light';   // 'light' | 'dark' — reconciled in initTheme()
 
   /* answers[id] = { sel: number | number[] | null, strength: 'lean'|'firm'|'agnostic' } */
   var answers = {};
@@ -131,6 +133,7 @@
   function renderQuestion() {
     var q = QS[cur];
     var cat = CAT_BY_KEY[q.cat];
+    var cc = catColors(cat);
     var a = answers[q.id];
     var host = el('qhost');
     try { localStorage.setItem(POS_KEY, String(cur)); } catch (e) {}
@@ -163,8 +166,8 @@
 
     host.innerHTML =
       '<div class="qcard">' +
-        '<span class="qcat" style="background:' + cat.fill + ';color:' + cat.title + '">' +
-          '<i style="background:' + cat.stroke + '"></i>' + esc(cat.name) + '</span>' +
+        '<span class="qcat" style="background:' + cc.fill + ';color:' + cc.title + '">' +
+          '<i style="background:' + cc.stroke + '"></i>' + esc(cat.name) + '</span>' +
         '<div class="qtopic">Q' + q.id + ' · ' + esc(q.topic) + '</div>' +
         '<h2 class="qtext">' + esc(q.q) + '</h2>' +
         (q.detail ? '<p class="qdetail">' + esc(q.detail) + '</p>' : '') +
@@ -419,7 +422,7 @@
       '<h2>' + esc(arch.name) + '</h2>' +
       '<p>' + arch.blurb + '</p>' +
       (arch.tags.length ? '<div class="tags">' + arch.tags.map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '</div>' : '') +
-      '<div class="tags" style="margin-top:14px"><span class="tag" style="background:#f1efe9;color:#5b574f;border-color:#e0dccf">' +
+      '<div class="tags" style="margin-top:14px"><span class="tag muted">' +
         c.answered + ' / 100 answered · ' + Math.round(c.agnosticFrac * 100) + '% agnostic</span></div>';
 
     /* axes */
@@ -466,17 +469,18 @@
 
   function renderBreakdown() {
     return CATS.map(function (cat) {
+      var cc = catColors(cat);
       var qs = QS.filter(function (q) { return q.cat === cat.key; });
       var cells = qs.map(function (q) {
         var p = positionText(q);
         if (!p) return '<div class="cell empty"><div class="t">' + esc(q.topic) + '</div><div class="v">—</div></div>';
         var sclass = p.strength === 'firm' ? 's-firm' : (p.strength === 'agnostic' ? 's-agno' : 's-lean');
         return '<div class="cell"><div class="t">' + esc(q.topic) + '</div>' +
-          '<div class="v" style="color:' + cat.text + '">' + esc(p.text) + '</div>' +
+          '<div class="v" style="color:' + cc.text + '">' + esc(p.text) + '</div>' +
           '<span class="s ' + sclass + '">' + STRENGTH_LABEL[p.strength] + '</span></div>';
       }).join('');
       return '<div class="cat-block">' +
-        '<div class="cat-bar" style="background:' + cat.fill + ';color:' + cat.title + '"><i style="background:' + cat.stroke + '"></i>' + esc(cat.name) + '</div>' +
+        '<div class="cat-bar" style="background:' + cc.fill + ';color:' + cc.title + '"><i style="background:' + cc.stroke + '"></i>' + esc(cat.name) + '</div>' +
         '<div class="cat-grid">' + cells + '</div></div>';
     }).join('');
   }
@@ -484,10 +488,54 @@
   /* ============================================================ *
    *  PROFILE SVG  (modelled on /example diagram)
    * ============================================================ */
-  function hexToRgb(hx) { hx = hx.replace('#', ''); return [parseInt(hx.substr(0, 2), 16), parseInt(hx.substr(2, 2), 16), parseInt(hx.substr(4, 2), 16)]; }
+  function toRgb(c) {
+    if (c.charAt(0) === '#') {
+      var hx = c.slice(1);
+      if (hx.length === 3) hx = hx.replace(/./g, '$&$&');
+      return [parseInt(hx.substr(0, 2), 16), parseInt(hx.substr(2, 2), 16), parseInt(hx.substr(4, 2), 16)];
+    }
+    var m = c.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0];
+  }
+  /* blend two colours (hex or rgb()) and return hex, so results re-blend cleanly */
   function blend(a, b, t) {
-    var A = hexToRgb(a), B = hexToRgb(b);
-    return 'rgb(' + Math.round(A[0] + (B[0] - A[0]) * t) + ',' + Math.round(A[1] + (B[1] - A[1]) * t) + ',' + Math.round(A[2] + (B[2] - A[2]) * t) + ')';
+    var A = toRgb(a), B = toRgb(b);
+    function hx(n) { n = Math.max(0, Math.min(255, Math.round(n))); return ('0' + n.toString(16)).slice(-2); }
+    return '#' + hx(A[0] + (B[0] - A[0]) * t) + hx(A[1] + (B[1] - A[1]) * t) + hx(A[2] + (B[2] - A[2]) * t);
+  }
+
+  /* ---------- theme-aware category colours ----------
+   * The category palette in questions.js is tuned for light mode. In dark
+   * mode we derive legible variants from each category's accent (`stroke`):
+   * dark tinted surfaces, light tinted text. */
+  function catColors(cat) {
+    if (theme === 'dark') {
+      return {
+        fill:   blend(cat.stroke, '#191713', 0.80),   // dark tinted band / chip background
+        stroke: blend(cat.stroke, '#191713', 0.34),   // muted but visible border
+        title:  blend(cat.stroke, '#ffffff', 0.62),   // light label on the dark band
+        text:   blend(cat.stroke, '#ffffff', 0.50)    // bright coloured value text
+      };
+    }
+    return { fill: cat.fill, stroke: cat.stroke, title: cat.title, text: cat.text };
+  }
+
+  /* per-card colours on the profile SVG, by conviction strength */
+  function cardStyle(strength, cat) {
+    var dark = theme === 'dark';
+    if (strength === 'agnostic') {
+      return dark
+        ? { fill: '#232019', stroke: '#3a352c', title: '#b9b3a8', text: '#8b857a', tag: 'Open' }
+        : { fill: '#f3f2ef', stroke: '#d8d2c6', title: '#6b6760', text: '#8a857c', tag: 'Open' };
+    }
+    var cc = catColors(cat);
+    if (strength === 'firm' || strength === 'multi') {
+      var ff = dark ? blend(cat.stroke, '#15130f', 0.72) : cat.fill;
+      return { fill: ff, stroke: cc.stroke, title: cc.title, text: cc.text, tag: strength === 'multi' ? 'Selected' : 'Conviction' };
+    }
+    var lf = dark ? blend(cat.stroke, '#15130f', 0.85) : blend(cat.fill, '#ffffff', 0.5);
+    var ls = dark ? blend(cat.stroke, '#15130f', 0.45) : blend(cat.stroke, '#ffffff', 0.35);
+    return { fill: lf, stroke: ls, title: cc.title, text: cc.text, tag: 'Leaning' };
   }
   function wrap(str, maxChars, maxLines) {
     var words = String(str).split(/\s+/), lines = [], cur = '';
@@ -511,6 +559,11 @@
   }
 
   function buildProfileSVG() {
+    var dark = theme === 'dark';
+    var PG = dark
+      ? { bg: '#1b1916', title: '#f2efe9', sub: '#9a9488', line: 'rgba(255,255,255,0.12)', legend: '#cfc9bd', foot: '#8b857a' }
+      : { bg: '#ffffff', title: '#1f1e1d', sub: '#8a857c', line: 'rgba(31,30,29,0.15)', legend: '#3d3d3a', foot: '#8a857c' };
+
     var W = 760, P = 40, CW = W - 2 * P;
     var COLS = 3, GAP = 12;
     var cardW = (CW - (COLS - 1) * GAP) / COLS;
@@ -522,47 +575,37 @@
     var y = 0;
 
     /* title */
-    parts.push('<text x="' + P + '" y="44" font-size="24" font-weight="600" fill="#1f1e1d">My philosophical profile</text>');
-    parts.push('<text x="' + P + '" y="68" font-size="13" fill="#8a857c">' + esc(answeredQ.length + ' of 100 questions answered · the 2020 PhilPapers Survey, as a personality test') + '</text>');
+    parts.push('<text x="' + P + '" y="44" font-size="24" font-weight="600" fill="' + PG.title + '">My philosophical profile</text>');
+    parts.push('<text x="' + P + '" y="68" font-size="13" fill="' + PG.sub + '">' + esc(answeredQ.length + ' of 100 questions answered · the 2020 PhilPapers Survey, as a personality test') + '</text>');
     y = 92;
 
     CATS.forEach(function (cat) {
       var qs = QS.filter(function (q) { return q.cat === cat.key && answers[q.id]; });
       if (!qs.length) return;
+      var cc = catColors(cat);
 
       /* category band */
-      parts.push('<rect x="' + P + '" y="' + y + '" width="' + CW + '" height="30" rx="8" fill="' + cat.fill + '" stroke="' + cat.stroke + '" stroke-width="0.5"/>');
-      parts.push('<text x="' + (W / 2) + '" y="' + (y + 15) + '" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="' + cat.title + '">' + esc(cat.name) + '</text>');
+      parts.push('<rect x="' + P + '" y="' + y + '" width="' + CW + '" height="30" rx="8" fill="' + cc.fill + '" stroke="' + cc.stroke + '" stroke-width="0.5"/>');
+      parts.push('<text x="' + (W / 2) + '" y="' + (y + 15) + '" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="' + cc.title + '">' + esc(cat.name) + '</text>');
       y += 30 + GAP;
 
       /* cards, row by row */
       for (var r = 0; r < qs.length; r += COLS) {
         var row = qs.slice(r, r + COLS);
-        var wrapped = row.map(function (q) {
-          var p = positionText(q);
-          return wrap(p.text, maxChars, 3);
-        });
+        var wrapped = row.map(function (q) { return wrap(positionText(q).text, maxChars, 3); });
         var maxLines = wrapped.reduce(function (mx, ls) { return Math.max(mx, ls.length); }, 1);
         var rowH = 26 + maxLines * 15 + 18;          // title + position lines + tag
 
         row.forEach(function (q, ci) {
           var p = positionText(q);
+          var st = cardStyle(p.strength, cat);
           var x = P + ci * (cardW + GAP);
-          var cardFill, cardStroke, titleCol, posCol, tag;
-          if (p.strength === 'agnostic') {
-            cardFill = '#f3f2ef'; cardStroke = '#d8d2c6'; titleCol = '#6b6760'; posCol = '#8a857c'; tag = 'Open';
-          } else if (p.strength === 'firm' || p.strength === 'multi') {
-            cardFill = cat.fill; cardStroke = cat.stroke; titleCol = cat.title; posCol = cat.text; tag = p.strength === 'multi' ? 'Selected' : 'Conviction';
-          } else {
-            cardFill = blend(cat.fill, '#ffffff', 0.5); cardStroke = blend(cat.stroke, '#ffffff', 0.35); titleCol = cat.title; posCol = cat.text; tag = 'Leaning';
-          }
-          parts.push('<rect x="' + x.toFixed(1) + '" y="' + y + '" width="' + cardW.toFixed(1) + '" height="' + rowH + '" rx="9" fill="' + cardFill + '" stroke="' + cardStroke + '" stroke-width="0.75"/>');
-          parts.push('<text x="' + (x + 12).toFixed(1) + '" y="' + (y + 19) + '" font-size="12.5" font-weight="600" fill="' + titleCol + '">' + esc(q.topic) + '</text>');
-          var ls = wrapped[ci];
-          ls.forEach(function (line, li) {
-            parts.push('<text x="' + (x + 12).toFixed(1) + '" y="' + (y + 37 + li * 15) + '" font-size="12" fill="' + posCol + '">' + esc(line) + '</text>');
+          parts.push('<rect x="' + x.toFixed(1) + '" y="' + y + '" width="' + cardW.toFixed(1) + '" height="' + rowH + '" rx="9" fill="' + st.fill + '" stroke="' + st.stroke + '" stroke-width="0.75"/>');
+          parts.push('<text x="' + (x + 12).toFixed(1) + '" y="' + (y + 19) + '" font-size="12.5" font-weight="600" fill="' + st.title + '">' + esc(q.topic) + '</text>');
+          wrapped[ci].forEach(function (line, li) {
+            parts.push('<text x="' + (x + 12).toFixed(1) + '" y="' + (y + 37 + li * 15) + '" font-size="12" fill="' + st.text + '">' + esc(line) + '</text>');
           });
-          parts.push('<text x="' + (x + cardW - 10).toFixed(1) + '" y="' + (y + rowH - 8) + '" text-anchor="end" font-size="9.5" font-weight="600" letter-spacing="0.4" fill="' + blend(posCol, '#ffffff', 0.25) + '">' + tag.toUpperCase() + '</text>');
+          parts.push('<text x="' + (x + cardW - 10).toFixed(1) + '" y="' + (y + rowH - 8) + '" text-anchor="end" font-size="9.5" font-weight="600" letter-spacing="0.4" fill="' + blend(st.text, dark ? '#000000' : '#ffffff', 0.2) + '">' + st.tag.toUpperCase() + '</text>');
         });
         y += rowH + GAP;
       }
@@ -571,29 +614,30 @@
 
     /* legend + footer */
     y += 4;
-    parts.push('<line x1="' + P + '" y1="' + y + '" x2="' + (W - P) + '" y2="' + y + '" stroke="rgba(31,30,29,0.15)" stroke-width="0.5"/>');
+    parts.push('<line x1="' + P + '" y1="' + y + '" x2="' + (W - P) + '" y2="' + y + '" stroke="' + PG.line + '" stroke-width="0.5"/>');
     y += 22;
-    parts.push('<text x="' + P + '" y="' + y + '" font-size="12" fill="#3d3d3a">Conviction key:</text>');
+    parts.push('<text x="' + P + '" y="' + y + '" font-size="12" fill="' + PG.legend + '">Conviction key:</text>');
+    var convC = dark ? '#9b93f0' : '#534AB7';
     var keys = [
-      { c: '#534AB7', t: 'Conviction (firm)' },
-      { c: blend('#534AB7', '#ffffff', 0.5), t: 'Leaning' },
-      { c: '#cdc8bf', t: 'Agnostic / open' }
+      { c: convC, t: 'Conviction (firm)' },
+      { c: blend(convC, PG.bg, 0.45), t: 'Leaning' },
+      { c: dark ? '#4a4640' : '#cdc8bf', t: 'Agnostic / open' }
     ];
     var kx = P + 92;
     keys.forEach(function (k) {
       parts.push('<rect x="' + kx + '" y="' + (y - 10) + '" width="12" height="12" rx="3" fill="' + k.c + '"/>');
-      parts.push('<text x="' + (kx + 17) + '" y="' + (y) + '" font-size="12" fill="#3d3d3a">' + esc(k.t) + '</text>');
+      parts.push('<text x="' + (kx + 17) + '" y="' + (y) + '" font-size="12" fill="' + PG.legend + '">' + esc(k.t) + '</text>');
       kx += 32 + k.t.length * 6.6;
     });
     y += 26;
-    parts.push('<text x="' + P + '" y="' + y + '" font-size="11.5" fill="#8a857c">Generated from the 100 questions of the 2020 PhilPapers Survey. Card shade shows how firmly each position is held.</text>');
+    parts.push('<text x="' + P + '" y="' + y + '" font-size="11.5" fill="' + PG.foot + '">Generated from the 100 questions of the 2020 PhilPapers Survey. Card shade shows how firmly each position is held.</text>');
     y += 24;
 
     var H = y;
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" ' +
       'font-family="' + FONT + '">' +
       '<title>My philosophical profile</title>' +
-      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"/>' +
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="' + PG.bg + '"/>' +
       parts.join('\n') +
       '</svg>';
     return svg;
@@ -674,8 +718,49 @@
     }
   }
 
+  /* ---------- theme ---------- */
+  function updateThemeToggle() {
+    var b = el('themeToggle');
+    if (!b) return;
+    var dark = theme === 'dark';
+    b.innerHTML = '<span class="ti">' + (dark ? '☀' : '☾') + '</span>';
+    b.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+    b.setAttribute('title', dark ? 'Light mode' : 'Dark mode');
+  }
+  function applyTheme(t, persist) {
+    theme = (t === 'dark') ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    if (persist) { try { localStorage.setItem(THEME_KEY, theme); } catch (e) {} }
+    updateThemeToggle();
+    /* re-render the active screen so JS-driven category colours follow suit */
+    var hash = location.hash.replace(/^#/, '');
+    if (hash === 'results' && answeredCount() > 0) renderResults();
+    else if (/^q\d+$/.test(hash)) renderQuestion();
+  }
+  function initTheme() {
+    var saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (e) {}
+    if (saved === 'dark' || saved === 'light') theme = saved;
+    else theme = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    updateThemeToggle();
+    var btn = el('themeToggle');
+    if (btn) btn.addEventListener('click', function () { applyTheme(theme === 'dark' ? 'light' : 'dark', true); });
+    /* follow OS changes only while the user hasn't picked explicitly */
+    if (window.matchMedia) {
+      var mq = matchMedia('(prefers-color-scheme: dark)');
+      var onChange = function (e) {
+        var s = null; try { s = localStorage.getItem(THEME_KEY); } catch (err) {}
+        if (s !== 'dark' && s !== 'light') applyTheme(e.matches ? 'dark' : 'light', false);
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    }
+  }
+
   function init() {
     load();
+    initTheme();
     updateProgress();
 
     el('startBtn').addEventListener('click', startQuiz);

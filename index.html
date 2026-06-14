@@ -5,9 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Philosophical Profile — the 2020 PhilPapers Survey as a personality test</title>
   <meta name="description" content="Answer the 100 questions of the 2020 PhilPapers Survey and get a colour-banded map of your philosophical positions, your leaning axes, and your philosophical archetype." />
+  <!-- set the theme before first paint to avoid a flash of the wrong colours -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('ppt_theme');
+        if (t !== 'dark' && t !== 'light') t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+<button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch theme"><span class="ti">☾</span></button>
 <div class="wrap">
 
   <!-- ============================ INTRO ============================ -->
