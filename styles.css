@@ -318,6 +318,41 @@ h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.08; margin: 0 0 14px; let
 .compare-col .cp { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
 .compare-note { font-size: 12px; color: var(--ink-faint); line-height: 1.6; margin: 16px 0 0; }
 
+/* links back to a question — used in the comparison card and breakdown cells */
+.compare-col a.ct, .compare-full a.ct, .cell .t a {
+  color: inherit; text-decoration: none;
+  border-bottom: 1px dotted var(--border-strong); cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.compare-col a.ct:hover, .compare-full a.ct:hover, .cell .t a:hover {
+  color: var(--accent); border-bottom-color: var(--accent);
+}
+
+/* the "show all positions" expander */
+.compare-more { margin-top: 16px; }
+.compare-toggle { padding-left: 0; }
+.compare-full { display: none; margin-top: 10px; border-top: 1px solid var(--border); padding-top: 14px; }
+.compare-card.show-all .compare-full { display: block; }
+.compare-full h4 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-faint);
+  font-weight: 700; margin: 0 0 8px;
+}
+.compare-full ul { list-style: none; margin: 0; padding: 0; }
+.compare-full li {
+  display: flex; justify-content: space-between; gap: 14px; align-items: baseline;
+  padding: 7px 0; border-bottom: 1px dashed var(--border);
+}
+.compare-full li:last-child { border-bottom: 0; }
+.compare-full .ct { font-weight: 600; font-size: 14px; flex: 0 1 auto; }
+.compare-full .ca { font-size: 12.5px; color: var(--ink-soft); flex: 1 1 auto; text-align: right; }
+.compare-full .cp { font-size: 12px; color: var(--ink-faint); white-space: nowrap; flex: none; min-width: 38px; text-align: right; }
+.compare-full li.minority .cp { color: var(--accent); font-weight: 600; }
+.compare-hint { font-size: 12px; color: var(--ink-faint); margin: 12px 0 0; }
+@media (max-width: 560px) {
+  .compare-full li { flex-wrap: wrap; gap: 2px 10px; }
+  .compare-full .ca { text-align: left; flex-basis: 100%; }
+}
+
 /* ---- compare with a friend ---- */
 .friend-card {
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);

@@ -278,6 +278,28 @@
     else if (e.key.toLowerCase() === 's') { act('skip'); e.preventDefault(); }
   });
 
+  /* the hash route that re-opens a given question (the quiz reads #q<n>
+   * as a 1-based index into QS, and shows the saved answer highlighted) */
+  function qHash(q) { return 'q' + (QS.indexOf(q) + 1); }
+  function qHref(q) { var h = qHash(q); return 'href="#' + h + '" data-goto="' + h + '"'; }
+
+  /* delegated clicks inside the results: links that jump back to a question
+   * (so you can re-read it and your answer), and the comparison "show all"
+   * toggle. Both are rendered as HTML strings, so we listen once here. */
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    var nav = t.closest && t.closest('[data-goto]');
+    if (nav) { e.preventDefault(); go('#' + nav.getAttribute('data-goto')); return; }
+    var tog = t.closest && t.closest('[data-toggle-compare]');
+    if (tog) {
+      e.preventDefault();
+      var card = tog.closest('.compare-card');
+      if (!card) return;
+      var on = card.classList.toggle('show-all');
+      tog.textContent = on ? 'Show fewer ‹' : ('Show all ' + tog.getAttribute('data-count') + ' positions ›');
+    }
+  });
+
   /* ============================================================ *
    *  SCORING — leaning axes
    * ============================================================ */
@@ -655,11 +677,12 @@
       var qs = QS.filter(function (q) { return q.cat === cat.key; });
       var cells = qs.map(function (q) {
         var p = positionText(q);
-        if (!p) return '<div class="cell empty"><div class="t">' + esc(q.topic) + '</div><div class="v">—</div></div>';
+        var topic = '<a ' + qHref(q) + '>' + esc(q.topic) + '</a>';
+        if (!p) return '<div class="cell empty"><div class="t">' + topic + '</div><div class="v">—</div></div>';
         var sclass = p.strength === 'firm' ? 's-firm'
           : (p.strength === 'agnostic' ? 's-agno'
           : (p.strength === 'nofact' ? 's-nofact' : 's-lean'));
-        return '<div class="cell"><div class="t">' + esc(q.topic) + '</div>' +
+        return '<div class="cell"><div class="t">' + topic + '</div>' +
           '<div class="v" style="color:' + cc.text + '">' + esc(p.text) + '</div>' +
           '<span class="s ' + sclass + '">' + STRENGTH_LABEL[p.strength] + '</span>' +
           renderSpread(q, cc) + '</div>';
@@ -759,7 +782,9 @@
       var shares = sels.map(function (i) { return d.p[i] || 0; });
       var share = shares.reduce(function (x, y) { return x + y; }, 0) / shares.length;
       var lead = leadIndex(d.p);
-      rows.push({ topic: q.topic, share: share, withPlurality: sels.indexOf(lead) !== -1, lead: q.opts[lead], leadPct: d.p[lead] });
+      var yp = positionText(q);
+      rows.push({ q: q, topic: q.topic, yourAnswer: yp ? yp.text : '', share: share,
+        withPlurality: sels.indexOf(lead) !== -1, lead: q.opts[lead], leadPct: d.p[lead] });
     });
     return rows;
   }
@@ -777,8 +802,15 @@
     var mainstream = byShare.slice(-3).reverse();
 
     function line(r) {
-      return '<li><span class="ct">' + esc(r.topic) + '</span>' +
+      return '<li><a class="ct" ' + qHref(r.q) + '>' + esc(r.topic) + '</a>' +
         '<span class="cp">' + Math.round(r.share) + '% of philosophers</span></li>';
+    }
+    function fullLine(r) {
+      return '<li' + (r.withPlurality ? '' : ' class="minority"') +
+        ' title="' + (r.withPlurality ? 'You sided with the most popular answer' : 'You took a minority position') + '">' +
+        '<a class="ct" ' + qHref(r.q) + '>' + esc(r.topic) + '</a>' +
+        '<span class="ca">You: ' + esc(r.yourAnswer) + '</span>' +
+        '<span class="cp">' + Math.round(r.share) + '%</span></li>';
     }
 
     return '<div class="compare-card">' +
@@ -788,6 +820,13 @@
       '<div class="compare-cols">' +
         '<div class="compare-col"><h4>Your most heterodox positions</h4><ul>' + heterodox.map(line).join('') + '</ul></div>' +
         '<div class="compare-col"><h4>Where you’re most mainstream</h4><ul>' + mainstream.map(line).join('') + '</ul></div>' +
+      '</div>' +
+      '<div class="compare-more">' +
+        '<button class="link-btn compare-toggle" type="button" data-toggle-compare data-count="' + rows.length + '">' +
+          'Show all ' + rows.length + ' positions ›</button>' +
+        '<div class="compare-full"><h4>Every position you took — least to most mainstream</h4><ul>' +
+          byShare.map(fullLine).join('') + '</ul>' +
+          '<p class="compare-hint">Tap any question to re-read it and your answer.</p></div>' +
       '</div>' +
       '<p class="compare-note">Spread shown against the <b>' + esc(PPT_SURVEY.meta.group.toLowerCase()) +
         '</b> of the 2020 PhilPapers Survey (n≈' + PPT_SURVEY.meta.n + '). ' +
