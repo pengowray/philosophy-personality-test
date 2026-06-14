@@ -132,22 +132,24 @@
 
   function renderQuestion() {
     var q = QS[cur];
+    var multi = isMulti(q);
     var cat = CAT_BY_KEY[q.cat];
     var cc = catColors(cat);
     var a = answers[q.id];
     var host = el('qhost');
+    var nonpos = a && (a.strength === 'agnostic' || a.strength === 'nofact');
     try { localStorage.setItem(POS_KEY, String(cur)); } catch (e) {}
 
     var optsHtml = q.opts.map(function (label, i) {
       var cls = 'opt';
-      if (a && a.strength !== 'agnostic' && isPick(q.id, i)) {
-        cls += q.multi ? ' firm' : (a.strength === 'firm' ? ' firm' : ' lean');
+      if (a && !nonpos && isPick(q.id, i)) {
+        cls += multi ? ' firm' : (a.strength === 'firm' ? ' firm' : ' lean');
       }
-      var keycap = q.multi ? '✓' : (i + 1);
+      var keycap = multi ? '✓' : (i + 1);
       var pickLabel = '';
-      if (a && a.strength !== 'agnostic' && isPick(q.id, i) && !q.multi) {
+      if (a && !nonpos && isPick(q.id, i) && !multi) {
         pickLabel = a.strength === 'firm' ? 'Conviction' : 'Leaning · click again for conviction';
-      } else if (q.multi && isPick(q.id, i)) {
+      } else if (multi && isPick(q.id, i)) {
         pickLabel = 'Selected';
       }
       return '<button class="' + cls + '" data-opt="' + i + '">' +
@@ -159,9 +161,12 @@
 
     var hint = q.multi
       ? 'Select all that apply.'
-      : 'Click once to <b>lean</b> toward an answer, twice to mark <b>conviction</b>.';
+      : (q.combo
+        ? 'Pick one — or a <b>combination</b>, if you hold several at once.'
+        : 'Click once to <b>lean</b> toward an answer, twice to mark <b>conviction</b>.');
 
     var agnosticOn = a && a.strength === 'agnostic';
+    var nofactOn = a && a.strength === 'nofact';
     var isLast = cur === QS.length - 1;
 
     host.innerHTML =
@@ -175,6 +180,7 @@
         '<div class="opts">' + optsHtml + '</div>' +
         '<div class="qextra">' +
           '<button class="chip ' + (agnosticOn ? 'on' : '') + '" data-act="agnostic">Agnostic / undecided</button>' +
+          '<button class="chip ' + (nofactOn ? 'on' : '') + '" data-act="nofact" title="A distinct stance: the question has no determinate answer — not that you are unsure, but that there is nothing to be right about.">No fact of the matter</button>' +
           '<button class="chip" data-act="skip">Skip ›</button>' +
           '<span class="spacer"></span>' +
         '</div>' +
@@ -194,17 +200,22 @@
     updateProgress();
   }
 
+  /* list-style (`multi`) and combination (`combo`) questions both let you
+   * toggle several options on; single questions cycle lean → conviction → off. */
+  function isMulti(q) { return !!(q.multi || q.combo); }
+
   function chooseOption(optIndex) {
     var q = QS[cur];
     var a = answers[q.id];
-    if (q.multi) {
-      var set = (a && Array.isArray(a.sel)) ? a.sel.slice() : [];
+    if (isMulti(q)) {
+      var prev = (a && Array.isArray(a.sel)) ? a.sel : [];
+      var set = prev.slice();
       var at = set.indexOf(optIndex);
       if (at === -1) set.push(optIndex); else set.splice(at, 1);
       if (set.length) answers[q.id] = { sel: set.sort(function (x, y) { return x - y; }), strength: 'firm' };
       else delete answers[q.id];
     } else {
-      if (a && a.strength !== 'agnostic' && a.sel === optIndex) {
+      if (a && a.strength !== 'agnostic' && a.strength !== 'nofact' && a.sel === optIndex) {
         if (a.strength === 'lean') a.strength = 'firm';
         else delete answers[q.id];                 // firm -> off
       } else {
@@ -220,6 +231,10 @@
     if (kind === 'agnostic') {
       if (answers[q.id] && answers[q.id].strength === 'agnostic') delete answers[q.id];
       else answers[q.id] = { sel: null, strength: 'agnostic' };
+      save(); renderQuestion();
+    } else if (kind === 'nofact') {
+      if (answers[q.id] && answers[q.id].strength === 'nofact') delete answers[q.id];
+      else answers[q.id] = { sel: null, strength: 'nofact' };
       save(); renderQuestion();
     } else if (kind === 'skip') {
       goNext();
@@ -252,6 +267,7 @@
     } else if (e.key === 'ArrowRight' || e.key === 'Enter') { goNext(); e.preventDefault(); }
     else if (e.key === 'ArrowLeft') { act('prev'); e.preventDefault(); }
     else if (e.key.toLowerCase() === 'a') { act('agnostic'); e.preventDefault(); }
+    else if (e.key.toLowerCase() === 'f') { act('nofact'); e.preventDefault(); }
     else if (e.key.toLowerCase() === 's') { act('skip'); e.preventDefault(); }
   });
 
@@ -312,10 +328,15 @@
     var sum = 0, wsum = 0, n = 0;
     spec.items.forEach(function (it) {
       var a = answers[it.q];
-      if (!a || a.strength === 'agnostic' || typeof a.sel !== 'number') return;
-      if (!(it.m.hasOwnProperty(a.sel))) return;
+      if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.sel == null) return;
+      /* combination answers contribute the average of their selected options'
+       * loadings, so e.g. a deontology+virtue pick lands between the two. */
+      var sels = Array.isArray(a.sel) ? a.sel : [a.sel];
+      var mapped = 0, mn = 0;
+      sels.forEach(function (s) { if (it.m.hasOwnProperty(s)) { mapped += it.m[s]; mn++; } });
+      if (!mn) return;
       var w = a.strength === 'firm' ? W_FIRM : W_LEAN;
-      sum += it.m[a.sel] * w; wsum += w; n++;
+      sum += (mapped / mn) * w; wsum += w; n++;
     });
     return { key: spec.key, left: spec.left, right: spec.right, n: n, value: wsum ? sum / wsum : null };
   }
@@ -331,7 +352,13 @@
     var picks = Object.keys(answers).filter(function (k) { return answers[k].strength === 'agnostic'; }).length;
     return {
       ax: ax, v: v,
-      is: function (id, idx) { return pickOf(id) === idx; },
+      /* true when option `idx` is among this question's picks — works for
+       * single, combination and list-style answers (but not agnostic/no-fact). */
+      is: function (id, idx) {
+        var a = answers[id];
+        if (!a || a.strength === 'agnostic' || a.strength === 'nofact') return false;
+        return isPick(id, idx);
+      },
       multiCount: multiCount,
       answered: answeredCount(),
       agnosticFrac: answeredCount() ? picks / answeredCount() : 0,
@@ -432,6 +459,10 @@
     var svg = buildProfileSVG();
     el('svgHost').innerHTML = svg;
 
+    /* how you compare with the profession */
+    var cmp = el('compare');
+    if (cmp) cmp.innerHTML = renderCompare();
+
     /* breakdown */
     el('breakdown').innerHTML = renderBreakdown();
   }
@@ -461,11 +492,12 @@
     var a = answers[q.id];
     if (!a) return null;
     if (a.strength === 'agnostic') return { text: 'Agnostic / undecided', strength: 'agnostic' };
+    if (a.strength === 'nofact') return { text: 'No fact of the matter', strength: 'nofact' };
     if (Array.isArray(a.sel)) return { text: a.sel.map(function (i) { return q.opts[i]; }).join(', '), strength: 'multi' };
     return { text: q.opts[a.sel], strength: a.strength };
   }
 
-  var STRENGTH_LABEL = { firm: 'Conviction', lean: 'Leaning', agnostic: 'Agnostic', multi: 'Selected' };
+  var STRENGTH_LABEL = { firm: 'Conviction', lean: 'Leaning', agnostic: 'Agnostic', nofact: 'No fact', multi: 'Selected' };
 
   function renderBreakdown() {
     return CATS.map(function (cat) {
@@ -474,15 +506,144 @@
       var cells = qs.map(function (q) {
         var p = positionText(q);
         if (!p) return '<div class="cell empty"><div class="t">' + esc(q.topic) + '</div><div class="v">—</div></div>';
-        var sclass = p.strength === 'firm' ? 's-firm' : (p.strength === 'agnostic' ? 's-agno' : 's-lean');
+        var sclass = p.strength === 'firm' ? 's-firm'
+          : (p.strength === 'agnostic' ? 's-agno'
+          : (p.strength === 'nofact' ? 's-nofact' : 's-lean'));
         return '<div class="cell"><div class="t">' + esc(q.topic) + '</div>' +
           '<div class="v" style="color:' + cc.text + '">' + esc(p.text) + '</div>' +
-          '<span class="s ' + sclass + '">' + STRENGTH_LABEL[p.strength] + '</span></div>';
+          '<span class="s ' + sclass + '">' + STRENGTH_LABEL[p.strength] + '</span>' +
+          renderSpread(q, cc) + '</div>';
       }).join('');
       return '<div class="cat-block">' +
         '<div class="cat-bar" style="background:' + cc.fill + ';color:' + cc.title + '"><i style="background:' + cc.stroke + '"></i>' + esc(cat.name) + '</div>' +
         '<div class="cat-grid">' + cells + '</div></div>';
     }).join('');
+  }
+
+  /* ============================================================ *
+   *  COMPARISON  —  how your answers sit against the survey spread
+   *  (all figures: 2020 PhilPapers Survey, all respondents)
+   * ============================================================ */
+  function surveyFor(id) {
+    return (window.PPT_SURVEY && PPT_SURVEY.q && PPT_SURVEY.q[id]) || null;
+  }
+  /* the option indices the user picked (empty for agnostic / no-fact / skip) */
+  function selIndices(id) {
+    var a = answers[id];
+    if (!a || a.strength === 'agnostic' || a.strength === 'nofact') return [];
+    if (Array.isArray(a.sel)) return a.sel;
+    if (typeof a.sel === 'number') return [a.sel];
+    return [];
+  }
+  function leadIndex(arr) {
+    var lead = 0;
+    for (var i = 1; i < arr.length; i++) if (arr[i] > arr[lead]) lead = i;
+    return lead;
+  }
+
+  /* a compact spread bar + caption, shown inside each breakdown cell */
+  function renderSpread(q, cc) {
+    var d = surveyFor(q.id);
+    if (!d) return '';
+    var sels = selIndices(q.id);
+    var dark = theme === 'dark';
+
+    /* list-style questions store rejection rates per item; show a short
+     * "share who agree" line for the user's picks that have data */
+    if (d.reject) {
+      var picks = sels.filter(function (i) { return i < d.reject.length; });
+      var bits = picks.map(function (i) {
+        var acc = Math.max(0, Math.round(100 - d.reject[i]));
+        return esc(q.opts[i]) + ' <b>' + acc + '%</b>';
+      });
+      var lead = '';
+      if (!bits.length) {
+        var li = leadIndex(d.reject.map(function (r) { return 100 - r; }));
+        lead = 'Most accepted: ' + esc(q.opts[li]) + ' (' + Math.round(100 - d.reject[li]) + '%)';
+      }
+      return '<div class="spread"><div class="spread-cap">' +
+        (bits.length ? 'Philosophers who agree — ' + bits.join(' · ') : lead) +
+        '</div></div>';
+    }
+
+    if (!d.p || !d.p.length) return '';
+    var total = d.p.reduce(function (x, y) { return x + y; }, 0) + (d.o || 0);
+    if (total <= 0) return '';
+
+    var segs = d.p.map(function (pct, i) {
+      var w = (pct / total * 100);
+      var on = sels.indexOf(i) !== -1;
+      var base = catColors(CAT_BY_KEY[q.cat]).stroke;
+      var col = on ? base : blend(base, dark ? '#15130f' : '#ffffff', 0.62);
+      return '<span class="seg' + (on ? ' on' : '') + '" style="width:' + w.toFixed(2) +
+        '%;background:' + col + '" title="' + esc(q.opts[i]) + ': ' + pct + '%"></span>';
+    }).join('');
+    if (d.o) {
+      var ow = (d.o / total * 100);
+      segs += '<span class="seg other" style="width:' + ow.toFixed(2) + '%" title="Other / something else: ~' + Math.round(d.o) + '%"></span>';
+    }
+
+    var li2 = leadIndex(d.p);
+    var cap;
+    if (!sels.length) {
+      cap = 'Philosophers: ' + esc(q.opts[li2]) + ' leads (' + Math.round(d.p[li2]) + '%)';
+    } else if (sels.length === 1) {
+      cap = '<b>' + Math.round(d.p[sels[0]]) + '%</b> of philosophers agree';
+    } else {
+      cap = 'You share: ' + sels.map(function (i) { return esc(q.opts[i]) + ' ' + Math.round(d.p[i]) + '%'; }).join(' · ');
+    }
+    return '<div class="spread"><div class="spread-bar">' + segs + '</div>' +
+      '<div class="spread-cap">' + cap + '</div></div>';
+  }
+
+  /* roll-up stats for the summary panel */
+  function comparisonRows() {
+    var rows = [];
+    QS.forEach(function (q) {
+      var a = answers[q.id];
+      if (!a || a.strength === 'agnostic' || a.strength === 'nofact') return;
+      var d = surveyFor(q.id);
+      if (!d || !d.p) return;                       // single & combo questions only
+      var sels = selIndices(q.id);
+      if (!sels.length) return;
+      var shares = sels.map(function (i) { return d.p[i] || 0; });
+      var share = shares.reduce(function (x, y) { return x + y; }, 0) / shares.length;
+      var lead = leadIndex(d.p);
+      rows.push({ topic: q.topic, share: share, withPlurality: sels.indexOf(lead) !== -1, lead: q.opts[lead], leadPct: d.p[lead] });
+    });
+    return rows;
+  }
+
+  function renderCompare() {
+    if (!window.PPT_SURVEY) return '';
+    var rows = comparisonRows();
+    if (rows.length < 3) {
+      return '<div class="compare-card"><p class="compare-lead">Answer a few more questions to see how your views sit against the profession.</p></div>';
+    }
+    var avg = rows.reduce(function (s, r) { return s + r.share; }, 0) / rows.length;
+    var withPl = rows.filter(function (r) { return r.withPlurality; }).length;
+    var byShare = rows.slice().sort(function (a, b) { return a.share - b.share; });
+    var heterodox = byShare.slice(0, 3);
+    var mainstream = byShare.slice(-3).reverse();
+
+    function line(r) {
+      return '<li><span class="ct">' + esc(r.topic) + '</span>' +
+        '<span class="cp">' + Math.round(r.share) + '% of philosophers</span></li>';
+    }
+
+    return '<div class="compare-card">' +
+      '<p class="compare-lead">On the ' + rows.length + ' questions where you took a position, on average <b>' +
+        Math.round(avg) + '%</b> of surveyed philosophers shared your view. ' +
+        'You sided with the most popular answer on <b>' + withPl + ' of ' + rows.length + '</b>.</p>' +
+      '<div class="compare-cols">' +
+        '<div class="compare-col"><h4>Your most heterodox positions</h4><ul>' + heterodox.map(line).join('') + '</ul></div>' +
+        '<div class="compare-col"><h4>Where you’re most mainstream</h4><ul>' + mainstream.map(line).join('') + '</ul></div>' +
+      '</div>' +
+      '<p class="compare-note">Spread shown against the <b>' + esc(PPT_SURVEY.meta.group.toLowerCase()) +
+        '</b> of the 2020 PhilPapers Survey (n≈' + PPT_SURVEY.meta.n + '). ' +
+        'These are the survey’s “accept or lean toward” figures, so a question’s bars can total a little over 100%. ' +
+        'Hover a bar to read each option.</p>' +
+      '</div>';
   }
 
   /* ============================================================ *
@@ -523,10 +684,11 @@
   /* per-card colours on the profile SVG, by conviction strength */
   function cardStyle(strength, cat) {
     var dark = theme === 'dark';
-    if (strength === 'agnostic') {
+    if (strength === 'agnostic' || strength === 'nofact') {
+      var tag = strength === 'nofact' ? 'No fact' : 'Open';
       return dark
-        ? { fill: '#232019', stroke: '#3a352c', title: '#b9b3a8', text: '#8b857a', tag: 'Open' }
-        : { fill: '#f3f2ef', stroke: '#d8d2c6', title: '#6b6760', text: '#8a857c', tag: 'Open' };
+        ? { fill: '#232019', stroke: '#3a352c', title: '#b9b3a8', text: '#8b857a', tag: tag }
+        : { fill: '#f3f2ef', stroke: '#d8d2c6', title: '#6b6760', text: '#8a857c', tag: tag };
     }
     var cc = catColors(cat);
     if (strength === 'firm' || strength === 'multi') {

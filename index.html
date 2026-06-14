@@ -54,9 +54,12 @@
 
       <p class="note">
         For each question you can <b>lean</b> toward an answer (one click), commit with
-        <b>conviction</b> (two clicks), mark yourself <b>agnostic</b>, or <b>skip</b>. Your answers are
-        saved only in this browser. Question wording follows the published survey design
-        (Bourget &amp; Chalmers, <em>Philosophers on Philosophy: The 2020 PhilPapers Survey</em>).
+        <b>conviction</b> (two clicks), mark yourself <b>agnostic</b>, hold that there’s <b>no fact of
+        the matter</b>, or <b>skip</b>. A few questions let you pick a <b>combination</b> of answers.
+        At the end you’ll see how your views compare with the survey’s spread of professional
+        philosophers. Your answers are saved only in this browser. Question wording follows the
+        published survey design (Bourget &amp; Chalmers, <em>Philosophers on Philosophy: The 2020
+        PhilPapers Survey</em>).
       </p>
     </div>
   </section>
@@ -73,7 +76,7 @@
     <div id="qhost"></div>
     <p class="note" style="text-align:center">
       Keyboard: number keys choose an answer · <code>→</code>/<code>Enter</code> next · <code>←</code> back ·
-      <code>A</code> agnostic · <code>S</code> skip
+      <code>A</code> agnostic · <code>F</code> no fact of the matter · <code>S</code> skip
     </p>
   </section>
 
@@ -101,7 +104,14 @@
     <div class="section-title">Where you lean</div>
     <div id="axes" class="axes"></div>
 
+    <div class="section-title">How you compare with philosophers</div>
+    <div id="compare"></div>
+
     <div class="section-title">Every position, by field</div>
+    <p class="note" style="margin-top:-6px">
+      Each card shows your answer and, where the survey covered it, a bar of how the profession
+      split — your pick highlighted.
+    </p>
     <div id="breakdown"></div>
 
     <footer class="foot">
@@ -115,6 +125,7 @@
 </div>
 
 <script src="questions.js"></script>
+<script src="survey-data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
