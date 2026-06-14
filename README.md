@@ -50,7 +50,9 @@ matter, `S` skip.
 ## Results
 
 1. **Archetype** — e.g. *The Naturalist, The Kantian, The Utilitarian, The Existentialist,
-   The Pragmatist, The Skeptic…* — chosen from your overall leanings.
+   The Pragmatist, The Skeptic, The Deflationist…* — chosen from your overall leanings.
+   *The Skeptic* falls out of heavy **agnostic** use (suspending judgment); *The Deflationist*
+   from heavy **no-fact-of-the-matter** use (dissolving the questions).
 2. **Where you lean** — seven signed axes (physicalist↔non-physicalist, empiricist↔rationalist,
    moral anti-realist↔realist, consequentialist↔deontological, naturalist↔theist,
    libertarian↔egalitarian, sparse↔abundant ontology), weighted by how firmly you answered.

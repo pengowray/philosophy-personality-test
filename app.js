@@ -17,7 +17,7 @@
   var STORE_KEY = 'ppt_answers_v1';
   var POS_KEY = 'ppt_pos_v1';
   var THEME_KEY = 'ppt_theme';
-  var W_FIRM = 1.0, W_LEAN = 0.55;
+  var W_FIRM = 1.0, W_LEAN = 0.55, W_NF = 0.6;   // W_NF: weight of an inferred "no fact of the matter" lean
   var loadedFromShare = false;
   var theme = 'light';   // 'light' | 'dark' — reconciled in initTheme()
 
@@ -291,12 +291,14 @@
         { q: 49, m: { 0: 1, 1: -1 } }
       ] },
     { key: 'moral', left: 'Moral anti-realist', right: 'Moral realist',
+      /* `nf`: where saying "no fact of the matter" itself implies a side — here the
+       * anti-realist pole (no aesthetic/moral fact = subjectivism / anti-realism). */
       items: [
-        { q: 14, m: { 0: 1, 1: -1 } },
-        { q: 17, m: { 0: 0.7, 1: -0.7 } },
-        { q: 72, m: { 0: 1, 1: 0.8, 2: -0.2, 3: -0.9, 4: -0.6 } },
-        { q: 3, m: { 0: 0.8, 1: -0.8 } },
-        { q: 36, m: { 0: -0.6, 1: 0.8, 2: -0.4 } }
+        { q: 14, m: { 0: 1, 1: -1 }, nf: -0.7 },
+        { q: 17, m: { 0: 0.7, 1: -0.7 }, nf: -0.5 },
+        { q: 72, m: { 0: 1, 1: 0.8, 2: -0.2, 3: -0.9, 4: -0.6 }, nf: -0.6 },
+        { q: 3, m: { 0: 0.8, 1: -0.8 }, nf: -0.6 },
+        { q: 36, m: { 0: -0.6, 1: 0.8, 2: -0.4 }, nf: -0.5 }
       ] },
     { key: 'ethics', left: 'Consequentialist', right: 'Deontological',
       items: [
@@ -328,7 +330,15 @@
     var sum = 0, wsum = 0, n = 0;
     spec.items.forEach(function (it) {
       var a = answers[it.q];
-      if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.sel == null) return;
+      if (!a || a.strength === 'agnostic') return;
+      /* "no fact of the matter" only counts on items that carry an `nf` loading
+       * (i.e. where it implies a side); elsewhere it's neutral, like agnostic. */
+      if (a.strength === 'nofact') {
+        if (typeof it.nf !== 'number') return;
+        sum += it.nf * W_NF; wsum += W_NF; n++;
+        return;
+      }
+      if (a.sel == null) return;
       /* combination answers contribute the average of their selected options'
        * loadings, so e.g. a deontology+virtue pick lands between the two. */
       var sels = Array.isArray(a.sel) ? a.sel : [a.sel];
@@ -349,7 +359,9 @@
     var ax = {}; computeAxes().forEach(function (a) { ax[a.key] = a.value; });
     function v(k) { return ax[k] == null ? 0 : ax[k]; }
     var multiCount = function (id) { var a = answers[id]; return a && Array.isArray(a.sel) ? a.sel.length : 0; };
-    var picks = Object.keys(answers).filter(function (k) { return answers[k].strength === 'agnostic'; }).length;
+    var keys = Object.keys(answers);
+    var picks = keys.filter(function (k) { return answers[k].strength === 'agnostic'; }).length;
+    var nofacts = keys.filter(function (k) { return answers[k].strength === 'nofact'; }).length;
     return {
       ax: ax, v: v,
       /* true when option `idx` is among this question's picks — works for
@@ -359,9 +371,17 @@
         if (!a || a.strength === 'agnostic' || a.strength === 'nofact') return false;
         return isPick(id, idx);
       },
+      /* like `is`, but a position held as one of several picks counts only
+       * fractionally — so a 1-of-3 combo doesn't earn a full single-pick bonus. */
+      share: function (id, idx) {
+        var a = answers[id];
+        if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || !isPick(id, idx)) return 0;
+        return 1 / (Array.isArray(a.sel) ? a.sel.length : 1);
+      },
       multiCount: multiCount,
       answered: answeredCount(),
       agnosticFrac: answeredCount() ? picks / answeredCount() : 0,
+      nofactFrac: answeredCount() ? nofacts / answeredCount() : 0,
       phys: -v('mind'), emp: -v('know'), nat: -v('relig'),
       real: v('moral'), deont: v('ethics'), cons: -v('ethics'),
       plat: v('meta'), egal: v('pol'), rat: v('know'), theist: v('relig')
@@ -376,26 +396,26 @@
       blurb: 'Pull the lever, push the man, count the consequences. For you ethics is arithmetic over well-being, and sentiment that resists the sums is a bug, not a feature. A card-carrying heir to Bentham, Mill and Singer.',
       score: function (c) {
         var s = 1.2 * c.cons + 0.6 * c.phys + 0.5 * c.nat;
-        if (c.is(20, 1)) s += 0.6; if (c.is(28, 0)) s += 0.3; if (c.is(34, 0)) s += 0.4;
+        s += 0.6 * c.share(20, 1); if (c.is(28, 0)) s += 0.3; if (c.is(34, 0)) s += 0.4;
         return s; } },
     { name: 'The Platonic Rationalist',
       blurb: 'Reason reaches truths the senses never could, and the abstract objects it discovers — numbers, properties, forms — are every bit as real as chairs. You trust the a priori and keep good company with Plato and Gödel.',
       score: function (c) { var s = 1.0 * c.rat + 1.0 * c.plat + 0.5 * c.real; if (c.is(2, 0)) s += 0.4; if (c.is(1, 0)) s += 0.2; return s; } },
     { name: 'The Kantian',
       blurb: 'Duty over outcomes, reason over appetite, and a moral law you take to be as objective as mathematics. Some acts are simply wrong, whatever the payoff. The sage of Königsberg is your lodestar.',
-      score: function (c) { var s = 0.9 * c.real + 0.9 * c.deont + 0.5 * c.rat; if (c.is(82, 2)) s += 0.6; if (c.is(20, 0)) s += 0.5; if (c.is(15, 1)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.9 * c.real + 0.9 * c.deont + 0.5 * c.rat; if (c.is(82, 2)) s += 0.6; s += 0.5 * c.share(20, 0); if (c.is(15, 1)) s += 0.3; return s; } },
     { name: 'The Theistic Traditionalist',
       blurb: 'You hold that mind, meaning and morality point beyond the merely physical, and that the universe is more than brute fact. Values are real and grounded in something deeper than us.',
       score: function (c) { var s = 1.2 * c.theist + 0.6 * c.real + 0.4 * c.deont; if (c.is(8, 0)) s += 0.6; return s; } },
     { name: 'The Aristotelian',
       blurb: 'Not rules, not sums, but character. The good life is the flourishing of a well-tuned soul, and wisdom is knowing how to act well in the particular case. Virtue is its own reward.',
-      score: function (c) { var s = 0.5 * c.real; if (c.is(20, 2)) s += 1.3; if (c.is(82, 0)) s += 0.6; if (c.is(31, 2) || c.is(31, 3)) s += 0.3; if (c.is(71, 1)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.5 * c.real; s += 1.3 * c.share(20, 2); if (c.is(82, 0)) s += 0.6; s += 0.3 * (c.share(31, 2) + c.share(31, 3)); if (c.is(71, 1)) s += 0.3; return s; } },
     { name: 'The Existentialist',
       blurb: 'No cosmic script writes your meaning — you do. Value is something we make rather than find, and authenticity matters more than any ledger of moral facts. You travel light, with Nietzsche, Sartre and de Beauvoir.',
       score: function (c) { var s = 0.9 * (-c.real) + 0.3 * c.nat; if (c.is(36, 0)) s += 0.6; if (c.is(36, 2)) s += 0.4; if (c.is(3, 1)) s += 0.3; if (c.is(33, 1)) s += 0.2; return s; } },
     { name: 'The Pragmatist',
       blurb: 'Truth is what works, meaning is use, and a method earns its keep by its fruits. You are happily pluralist about how to do philosophy and suspicious of grand metaphysical pictures. James, Dewey and the later Wittgenstein are your people.',
-      score: function (c) { var s = 0.3 * c.nat; if (c.is(29, 1)) s += 0.6; if (c.multiCount(37) >= 3) s += 0.6; if (c.is(100, 1)) s += 0.3; if (c.is(61, 1)) s += 0.2; if (c.is(67, 1)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.3 * c.nat + 1.1 * c.nofactFrac; if (c.is(29, 1)) s += 0.6; if (c.multiCount(37) >= 3) s += 0.6; if (c.is(100, 1)) s += 0.3; if (c.is(61, 1)) s += 0.2; if (c.is(67, 1)) s += 0.3; return s; } },
     { name: 'The Idealist',
       blurb: 'Mind is not a late arrival in a dead universe but close to its ground floor. The hard problem is hard for a reason, and reality may be more mental than the physicalists allow. Berkeley, Leibniz and the panpsychists keep you company.',
       score: function (c) { var s = 0.9 * (-c.phys); if (c.is(6, 0)) s += 0.6; if (c.is(16, 1)) s += 0.3; if (c.is(50, 0) || c.is(50, 4)) s += 0.4; if (c.is(59, 0)) s += 0.2; return s; } },
@@ -407,6 +427,11 @@
   function chooseArchetype(c) {
     if (c.answered < 8) {
       return { name: 'The Sphinx', blurb: 'You have answered only a few questions, so your portrait is still mostly in shadow. Answer more to bring it into focus.', tags: [] };
+    }
+    /* a strong deflationary streak (lots of "no fact of the matter") is its own
+     * thing — dissolving questions rather than suspending judgment on them. */
+    if (c.nofactFrac > 0.3 && c.nofactFrac >= c.agnosticFrac) {
+      return { name: 'The Deflationist', blurb: 'You don’t so much answer philosophy’s questions as dissolve them. Where others see deep facts waiting to be uncovered, you suspect a knot in our language or a pseudo-problem dressed up as a real one. Carnap, the later Wittgenstein and the quietists are your people.', tags: archetypeTags(c) };
     }
     if (c.agnosticFrac > 0.42) {
       return { name: 'The Skeptic', blurb: 'You suspend judgment where others rush in. Faced with philosophy’s hardest questions you keep your powder dry — a fox who knows many things rather than one big thing. Hume’s mitigated skepticism suits you.', tags: archetypeTags(c) };
