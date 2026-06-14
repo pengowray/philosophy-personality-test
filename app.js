@@ -318,11 +318,16 @@
         { q: 78, m: { 0: -1, 1: 1 } }
       ] },
     { key: 'meta', left: 'Sparse / nominalist', right: 'Abundant / Platonist',
+      /* `nf` here is a deliberate guess at low weight (`nfw`): "no fact of the
+       * matter" about these existence disputes is metaontological deflationism
+       * (Carnap, quantifier variance), which isn't strictly nominalism — but it
+       * refuses the heavyweight abundant ontology, so it tips gently sparse. The
+       * small magnitude + low weight keep it easily overridden by real answers. */
       items: [
-        { q: 2, m: { 0: 1, 1: -1 } },
-        { q: 79, m: { 0: 0.6, 1: 0.8, 2: -1 } },
-        { q: 81, m: { 0: -0.3, 1: 0.7, 2: 1, 3: 0.4, 4: -1 } },
-        { q: 66, m: { 0: -1, 1: 0, 2: 1 } }
+        { q: 2, m: { 0: 1, 1: -1 }, nf: -0.3, nfw: 0.4 },
+        { q: 79, m: { 0: 0.6, 1: 0.8, 2: -1 }, nf: -0.3, nfw: 0.4 },
+        { q: 81, m: { 0: -0.3, 1: 0.7, 2: 1, 3: 0.4, 4: -1 }, nf: -0.3, nfw: 0.4 },
+        { q: 66, m: { 0: -1, 1: 0, 2: 1 }, nf: -0.3, nfw: 0.4 }
       ] }
   ];
 
@@ -335,7 +340,8 @@
        * (i.e. where it implies a side); elsewhere it's neutral, like agnostic. */
       if (a.strength === 'nofact') {
         if (typeof it.nf !== 'number') return;
-        sum += it.nf * W_NF; wsum += W_NF; n++;
+        var nw = (typeof it.nfw === 'number') ? it.nfw : W_NF;   // per-item weight for shakier mappings
+        sum += it.nf * nw; wsum += nw; n++;
         return;
       }
       if (a.sel == null) return;
