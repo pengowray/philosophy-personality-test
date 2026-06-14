@@ -39,26 +39,53 @@
   }
 
   /* ---------- persistence + sharing ---------- */
+  /* Persist to TWO places: localStorage and the URL's `?s=` param. The URL
+   * copy is the safety net — some browsers (seen in the wild outside Chrome)
+   * drop or freeze our localStorage between refreshes, but the address bar
+   * survives a reload, so the compact `?s=` blob restores full progress. */
   function save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(answers)); } catch (e) {}
+    syncUrl();
+  }
+  /* keep `?s=<compact>` in the URL in sync with `answers`, without disturbing
+   * the current route hash (so a refresh lands back on the same question) */
+  function syncUrl() {
+    try {
+      var qs = answeredCount() ? ('?s=' + encodeState()) : '';
+      history.replaceState(history.state, '', location.pathname + qs + (location.hash || ''));
+    } catch (e) {}
   }
   /* `#q5` / `#results` / `#intro` are routes; anything else in the hash is
    * treated as a (legacy) base64 share blob. New share links use `?s=`. */
   function isRoute(str) { return /^(intro|results|q\d+)$/.test(str); }
+  function nKeys(o) { return o ? Object.keys(o).length : 0; }
   function load() {
+    var local = null;
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (raw) local = JSON.parse(raw) || {};
+    } catch (e) {}
+
+    /* `?s=` is authoritative: it's either your own just-saved state (always a
+     * superset of localStorage, since save() writes both together) or a share
+     * link you opened on purpose. Only adopt it when it actually carries answers
+     * — an empty blob must never wipe a good local copy. */
     var sParam = '';
     try { sParam = new URLSearchParams(location.search).get('s') || ''; } catch (e) {}
     var fromQuery = decodeState(sParam);
-    if (fromQuery) { answers = fromQuery; loadedFromShare = true; save(); return; }
+    if (fromQuery && nKeys(fromQuery)) { answers = fromQuery; loadedFromShare = true; save(); return; }
+
+    /* legacy base64 blob in the hash. Guard hard against the refresh-data-loss
+     * bug: a stale/partial blob must not shrink a fuller saved copy. */
     var hash = location.hash.replace(/^#/, '');
     if (hash && !isRoute(hash)) {
       var fromHash = decodeState(hash);
-      if (fromHash) { answers = fromHash; loadedFromShare = true; save(); return; }
+      if (fromHash && nKeys(fromHash) && nKeys(fromHash) >= nKeys(local)) {
+        answers = fromHash; loadedFromShare = true; save(); return;
+      }
     }
-    try {
-      var raw = localStorage.getItem(STORE_KEY);
-      if (raw) answers = JSON.parse(raw) || {};
-    } catch (e) { answers = {}; }
+
+    answers = local || {};
   }
   /* ---- compact share codec (v2) ----------------------------------------
    * A share blob is `~` followed by per-question segments joined by `-`.
@@ -1387,6 +1414,7 @@
 
   function init() {
     load();
+    syncUrl();             // stamp `?s=` immediately, even when loaded from localStorage
     initTheme();
     updateProgress();
 
