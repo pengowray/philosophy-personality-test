@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Philosophical Profile — the 2020 PhilPapers Survey as a personality test</title>
+  <meta name="description" content="Answer the 100 questions of the 2020 PhilPapers Survey and get a colour-banded map of your philosophical positions, your leaning axes, and your philosophical archetype." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============================ INTRO ============================ -->
+  <section id="screen-intro" class="screen active">
+    <div class="hero">
+      <span class="eyebrow">The 2020 PhilPapers Survey · as a personality test</span>
+      <h1>What is your<br />philosophical profile?</h1>
+      <p class="lede">
+        In 2020, thousands of professional philosophers were polled on the field’s 100 deepest
+        dividing questions — free will, consciousness, God, the trolley problem, the meaning of life.
+        Answer them yourself and see where you stand.
+      </p>
+
+      <div class="facts">
+        <div class="fact"><b>100</b><span>questions</span></div>
+        <div class="fact"><b>10</b><span>fields of philosophy</span></div>
+        <div class="fact"><b>~12 min</b><span>or stop anytime</span></div>
+        <div class="fact"><b>1</b><span>archetype + a shareable map</span></div>
+      </div>
+
+      <div class="btn-row">
+        <button id="startBtn" class="btn btn-primary">Begin the test ›</button>
+        <button id="resultsTopBtn" class="btn btn-ghost">Skip to results</button>
+      </div>
+
+      <div id="resumeRow" class="btn-row" style="display:none; margin-top:14px">
+        <span class="note" style="margin:0; align-self:center">
+          <span id="resumeText"></span>
+          <button id="resumeBtn" class="link-btn">Resume ›</button>
+          <button id="introReset" class="link-btn">Start over</button>
+        </span>
+      </div>
+
+      <p class="note">
+        For each question you can <b>lean</b> toward an answer (one click), commit with
+        <b>conviction</b> (two clicks), mark yourself <b>agnostic</b>, or <b>skip</b>. Your answers are
+        saved only in this browser. Question wording follows the published survey design
+        (Bourget &amp; Chalmers, <em>Philosophers on Philosophy: The 2020 PhilPapers Survey</em>).
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================ QUIZ ============================ -->
+  <section id="screen-quiz" class="screen">
+    <div class="topbar">
+      <div class="topbar-inner">
+        <div class="progress"><i id="progressFill"></i></div>
+        <span id="counter" class="counter"><b>0</b> / 100 answered</span>
+        <button id="resultsTopBtn2" class="link-btn" onclick="document.getElementById('resultsTopBtn').click()">See results ›</button>
+      </div>
+    </div>
+    <div id="qhost"></div>
+    <p class="note" style="text-align:center">
+      Keyboard: number keys choose an answer · <code>→</code>/<code>Enter</code> next · <code>←</code> back ·
+      <code>A</code> agnostic · <code>S</code> skip
+    </p>
+  </section>
+
+  <!-- ============================ RESULTS ============================ -->
+  <section id="screen-results" class="screen">
+    <div class="result-head">
+      <span class="eyebrow">Your results</span>
+    </div>
+
+    <div id="archetype" class="archetype-card"></div>
+
+    <div class="svg-actions">
+      <button id="btnSVG" class="btn btn-ghost">⬇ Download SVG</button>
+      <button id="btnPNG" class="btn btn-ghost">⬇ Download PNG</button>
+      <button id="btnShare" class="btn btn-ghost">🔗 Copy shareable link</button>
+      <span class="spacer" style="flex:1"></span>
+      <button id="btnRetake" class="btn btn-ghost">Review answers</button>
+      <button id="btnReset" class="btn btn-ghost">Start over</button>
+    </div>
+
+    <div class="section-title">Your profile map</div>
+    <div id="svgHost" class="svg-card"></div>
+
+    <div class="section-title">Where you lean</div>
+    <div id="axes" class="axes"></div>
+
+    <div class="section-title">Every position, by field</div>
+    <div id="breakdown"></div>
+
+    <footer class="foot">
+      A toy built from the 100 questions of the
+      <a href="https://survey2020.philpeople.org/survey/design/questions" target="_blank" rel="noopener">2020 PhilPapers Survey</a>.
+      Archetypes and axes are interpretive and just for fun — not a verdict, and certainly not how the
+      survey itself was scored.
+    </footer>
+  </section>
+
+</div>
+
+<script src="questions.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
