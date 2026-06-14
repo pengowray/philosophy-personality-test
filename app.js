@@ -425,6 +425,21 @@
       if (!card) return;
       var on = card.classList.toggle('show-all');
       tog.textContent = on ? 'Show fewer ‹' : ('Show all ' + tog.getAttribute('data-count') + ' positions ›');
+      return;
+    }
+    var sp = t.closest && t.closest('[data-spread-toggle]');
+    if (sp) {
+      e.preventDefault();
+      var spread = sp.closest('.spread');
+      if (!spread) return;
+      var open = spread.classList.toggle('show-detail');
+      var toggles = spread.querySelectorAll('[data-spread-toggle]');
+      for (var i = 0; i < toggles.length; i++) {
+        toggles[i].setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (toggles[i].classList.contains('spread-more')) {
+          toggles[i].textContent = open ? 'hide ▴' : 'details ▾';
+        }
+      }
     }
   });
 
@@ -850,7 +865,9 @@
     return lead;
   }
 
-  /* a compact spread bar + caption, shown inside each breakdown cell */
+  /* a compact spread bar + caption, shown inside each breakdown cell.
+   * The bar (or the "details" link) is clickable: it reveals a full
+   * per-option breakdown of how the profession answered. */
   function renderSpread(q, cc) {
     var d = surveyFor(q.id);
     if (!d) return '';
@@ -870,9 +887,13 @@
         var li = leadIndex(d.reject.map(function (r) { return 100 - r; }));
         lead = 'Most accepted: ' + esc(q.opts[li]) + ' (' + Math.round(100 - d.reject[li]) + '%)';
       }
+      var rdetail = d.reject.map(function (r, i) {
+        return { name: q.opts[i], pct: Math.max(0, 100 - r), on: sels.indexOf(i) !== -1 };
+      }).sort(function (a, b) { return b.pct - a.pct; });
       return '<div class="spread"><div class="spread-cap">' +
         (bits.length ? 'Philosophers who agree — ' + bits.join(' · ') : lead) +
-        '</div></div>';
+        ' ' + spreadToggle() + '</div>' +
+        spreadDetail(rdetail, 0) + '</div>';
     }
 
     if (!d.p || !d.p.length) return '';
@@ -901,8 +922,37 @@
     } else {
       cap = 'You share: ' + sels.map(function (i) { return esc(q.opts[i]) + ' ' + Math.round(d.p[i]) + '%'; }).join(' · ');
     }
-    return '<div class="spread"><div class="spread-bar">' + segs + '</div>' +
-      '<div class="spread-cap">' + cap + '</div></div>';
+
+    var pdetail = d.p.map(function (pct, i) {
+      return { name: q.opts[i], pct: pct, on: sels.indexOf(i) !== -1 };
+    }).sort(function (a, b) { return b.pct - a.pct; });
+
+    return '<div class="spread">' +
+      '<button type="button" class="spread-bar" data-spread-toggle aria-expanded="false"' +
+        ' aria-label="Show the full breakdown of how philosophers answered">' + segs + '</button>' +
+      '<div class="spread-cap">' + cap + ' ' + spreadToggle() + '</div>' +
+      spreadDetail(pdetail, d.o) + '</div>';
+  }
+
+  /* the little "details" toggle that sits at the end of a spread caption */
+  function spreadToggle() {
+    return '<button type="button" class="spread-more" data-spread-toggle aria-expanded="false">details ▾</button>';
+  }
+
+  /* the per-option breakdown revealed when a spread is clicked. `rows` is
+   * already sorted high→low; `other` is the residual "something else" share */
+  function spreadDetail(rows, other) {
+    var items = rows.map(function (r) {
+      return '<li' + (r.on ? ' class="on"' : '') + '>' +
+        '<span class="sd-opt">' + esc(r.name) +
+          (r.on ? '<span class="sd-you">your pick</span>' : '') + '</span>' +
+        '<span class="sd-pct">' + Math.round(r.pct) + '%</span></li>';
+    }).join('');
+    if (other) {
+      items += '<li class="other"><span class="sd-opt">Other / something else</span>' +
+        '<span class="sd-pct">~' + Math.round(other) + '%</span></li>';
+    }
+    return '<ul class="spread-detail">' + items + '</ul>';
   }
 
   /* roll-up stats for the summary panel */
@@ -966,8 +1016,7 @@
       '</div>' +
       '<p class="compare-note">Spread shown against the <b>' + esc(PPT_SURVEY.meta.group.toLowerCase()) +
         '</b> of the 2020 PhilPapers Survey (n≈' + PPT_SURVEY.meta.n + '). ' +
-        'These are the survey’s “accept or lean toward” figures, so a question’s bars can total a little over 100%. ' +
-        'Hover a bar to read each option.</p>' +
+        'These are the survey’s “accept or lean toward” figures, so a question’s bars can total a little over 100%.</p>' +
       '</div>';
   }
 
