@@ -153,9 +153,12 @@
       } else if (multi && isPick(q.id, i)) {
         pickLabel = 'Selected';
       }
+      var note = q.optNotes && q.optNotes[i];
       return '<button class="' + cls + '" data-opt="' + i + '">' +
         '<span class="key">' + keycap + '</span>' +
-        '<span class="lbl">' + esc(label) + '</span>' +
+        '<span class="lbl">' + esc(label) +
+          (note ? '<span class="optnote">' + esc(note) + '</span>' : '') +
+        '</span>' +
         '<span class="pick">' + pickLabel + '</span>' +
         '</button>';
     }).join('');

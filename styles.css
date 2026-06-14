@@ -193,7 +193,7 @@ h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.08; margin: 0 0 14px; let
 .qtext { font-size: 22px; line-height: 1.3; margin: 0 0 14px; letter-spacing: -.01em; }
 .qdetail {
   font-size: 14.5px; line-height: 1.6; color: var(--ink-soft);
-  margin: 0 0 18px; padding: 12px 14px;
+  margin: 0 0 18px; padding: 12px 14px; white-space: pre-line;
   background: var(--detail-bg); border: 1px solid var(--border);
   border-left: 3px solid var(--border-strong); border-radius: 10px;
 }
@@ -211,7 +211,8 @@ h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.08; margin: 0 0 14px; let
   flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
   font-size: 13px; font-weight: 700; color: var(--ink-soft); background: var(--opt-key-bg); border: 1px solid var(--border-strong);
 }
-.opt .lbl { flex: 1; }
+.opt .lbl { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.opt .optnote { font-size: 13px; font-weight: 400; color: var(--ink-faint); }
 .opt .pick { font-size: 12px; font-weight: 600; color: var(--ink-faint); opacity: 0; transition: opacity .12s; }
 .opt:hover .pick { opacity: 1; }
 
