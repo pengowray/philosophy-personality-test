@@ -261,6 +261,9 @@
   document.addEventListener('keydown', function (e) {
     if (!el('screen-quiz').classList.contains('active')) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    /* ignore browser/OS shortcuts (Ctrl+F, Cmd+R, Alt+…) — let them through
+       so the user can search the page etc. without changing answers */
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     var q = QS[cur];
     if (e.key >= '1' && e.key <= '9') {
       var idx = parseInt(e.key, 10) - 1;
