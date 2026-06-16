@@ -464,6 +464,25 @@
     var t = e.target;
     var nav = t.closest && t.closest('[data-goto]');
     if (nav) { e.preventDefault(); go('#' + nav.getAttribute('data-goto')); return; }
+    var bd = t.closest && t.closest('[data-badge-toggle]');
+    if (bd) {
+      e.preventDefault();
+      var bi = parseInt(bd.getAttribute('data-badge-toggle'), 10);
+      var badge = lastBadges[bi];
+      var pop = el('badgePop');
+      if (!badge || !pop) return;
+      var row = bd.parentNode;
+      var already = bd.getAttribute('aria-expanded') === 'true';
+      if (row) {
+        var chips = row.querySelectorAll('[data-badge-toggle]');
+        for (var bj = 0; bj < chips.length; bj++) chips[bj].setAttribute('aria-expanded', 'false');
+      }
+      if (already) { pop.hidden = true; pop.innerHTML = ''; return; }
+      bd.setAttribute('aria-expanded', 'true');
+      pop.innerHTML = '<b>' + esc(badge.name) + '</b> ' + badge.blurb;
+      pop.hidden = false;
+      return;
+    }
     var tog = t.closest && t.closest('[data-toggle-compare]');
     if (tog) {
       e.preventDefault();
@@ -607,6 +626,19 @@
         if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other' || !isPick(id, idx)) return 0;
         return 1 / (Array.isArray(a.sel) ? a.sel.length : 1);
       },
+      /* strength-aware gate: like `is`, but returns a weight scaled by how
+       * firmly the option was held — conviction 1.0, a bare lean 0.55, and
+       * ×0.8 again if hedged with a "but" (so a hedged lean is only ~0.44).
+       * 0 when it isn't a pick. Niche archetypes and badges gate on THIS, not
+       * on `is`, so a tentative answer can't capture the result the way a
+       * conviction can — the whole point of "make them harder / more sure". */
+      g: function (id, idx) {
+        var a = answers[id];
+        if (!a || a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other' || !isPick(id, idx)) return 0;
+        var w = a.strength === 'firm' ? W_FIRM : W_LEAN;
+        if (a.but) w *= W_BUT;
+        return w;
+      },
       multiCount: multiCount,
       answered: answeredCount(),
       agnosticFrac: answeredCount() ? picks / answeredCount() : 0,
@@ -617,42 +649,48 @@
     };
   }
 
+  /* Every pick-based bonus below is scaled by `c.g` (strength-aware): a
+   * conviction counts full, a bare lean ~0.55, a hedged lean ~0.44. So the
+   * archetypes are "harder / more sure" — a tentative answer no longer
+   * captures the result. The four thinnest single-pick types (Modal Realist,
+   * Dialetheist, Mysterian, Moral Particularist) have been moved down to
+   * BADGES, which decorate whichever headline you land on. */
   var ARCHETYPES = [
     { name: 'The Naturalist',
       blurb: 'You see one world, and it is the natural one. Mind is what brains (and maybe machines) do, knowledge grows from experience, and you reach for science before metaphysics. Quine and Dennett would nod along.',
       /* axis terms set the base; the picks give a hard-naturalist (no hard
        * problem, naturalistic metaphilosophy) the edge over pick-bonus rivals. */
-      score: function (c) { var s = 1.0 * c.phys + 0.8 * c.emp + 0.9 * c.nat + 0.3 * c.cons; if (c.is(59, 1)) s += 0.4; if (c.is(15, 0)) s += 0.3; if (c.is(16, 0)) s += 0.2; return s; } },
+      score: function (c) { var s = 1.0 * c.phys + 0.8 * c.emp + 0.9 * c.nat + 0.3 * c.cons; s += 0.4 * c.g(59, 1) + 0.3 * c.g(15, 0) + 0.2 * c.g(16, 0); return s; } },
     { name: 'The Utilitarian',
       blurb: 'Pull the lever, push the man, count the consequences. For you ethics is arithmetic over well-being, and sentiment that resists the sums is a bug, not a feature. A card-carrying heir to Bentham, Mill and Singer.',
       score: function (c) {
         var s = 1.2 * c.cons + 0.6 * c.phys + 0.5 * c.nat;
-        s += 0.6 * c.share(20, 1); if (c.is(28, 0)) s += 0.3; if (c.is(34, 0)) s += 0.4;
+        s += 0.6 * c.share(20, 1) + 0.3 * c.g(28, 0) + 0.4 * c.g(34, 0);
         return s; } },
     { name: 'The Platonic Rationalist',
       blurb: 'Reason reaches truths the senses never could, and the abstract objects it discovers — numbers, properties, forms — are every bit as real as chairs. You trust the a priori and keep good company with Plato and Gödel.',
-      score: function (c) { var s = 1.0 * c.rat + 1.0 * c.plat + 0.5 * c.real; if (c.is(2, 0)) s += 0.4; if (c.is(1, 0)) s += 0.2; return s; } },
+      score: function (c) { var s = 1.0 * c.rat + 1.0 * c.plat + 0.5 * c.real; s += 0.4 * c.g(2, 0) + 0.2 * c.g(1, 0); return s; } },
     { name: 'The Kantian',
       blurb: 'Duty over outcomes, reason over appetite, and a moral law you take to be as objective as mathematics. Some acts are simply wrong, whatever the payoff. The sage of Königsberg is your lodestar.',
-      score: function (c) { var s = 0.9 * c.real + 0.9 * c.deont + 0.5 * c.rat; if (c.is(82, 2)) s += 0.6; s += 0.5 * c.share(20, 0); if (c.is(15, 1)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.9 * c.real + 0.9 * c.deont + 0.5 * c.rat; s += 0.6 * c.g(82, 2) + 0.5 * c.share(20, 0) + 0.3 * c.g(15, 1); return s; } },
     { name: 'The Theistic Traditionalist',
       blurb: 'You hold that mind, meaning and morality point beyond the merely physical, and that the universe is more than brute fact. Values are real and grounded in something deeper than us.',
-      score: function (c) { var s = 1.2 * c.theist + 0.6 * c.real + 0.4 * c.deont; if (c.is(8, 0)) s += 0.6; return s; } },
+      score: function (c) { var s = 1.2 * c.theist + 0.6 * c.real + 0.4 * c.deont; s += 0.6 * c.g(8, 0); return s; } },
     { name: 'The Aristotelian',
       blurb: 'Not rules, not sums, but character. The good life is the flourishing of a well-tuned soul, and wisdom is knowing how to act well in the particular case. Virtue is its own reward.',
-      score: function (c) { var s = 0.5 * c.real; s += 1.3 * c.share(20, 2); if (c.is(82, 0)) s += 0.6; s += 0.3 * (c.share(31, 2) + c.share(31, 3)); if (c.is(71, 1)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.5 * c.real; s += 1.3 * c.share(20, 2) + 0.6 * c.g(82, 0) + 0.3 * (c.share(31, 2) + c.share(31, 3)) + 0.3 * c.g(71, 1); return s; } },
     { name: 'The Existentialist',
       blurb: 'No cosmic script writes your meaning — you do. Value is something we make rather than find, and authenticity matters more than any ledger of moral facts. You travel light, with Nietzsche, Sartre and de Beauvoir.',
-      score: function (c) { var s = 0.9 * (-c.real) + 0.3 * c.nat; if (c.is(36, 0)) s += 0.6; if (c.is(36, 2)) s += 0.4; if (c.is(3, 1)) s += 0.3; if (c.is(33, 1)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.9 * (-c.real) + 0.3 * c.nat; s += 0.6 * c.g(36, 0) + 0.4 * c.g(36, 2) + 0.3 * c.g(3, 1) + 0.2 * c.g(33, 1); return s; } },
     { name: 'The Pragmatist',
       blurb: 'Truth is what works, meaning is use, and a method earns its keep by its fruits. You are happily pluralist about how to do philosophy and suspicious of grand metaphysical pictures. James, Dewey and the later Wittgenstein are your people.',
-      score: function (c) { var s = 0.3 * c.nat + 1.1 * c.nofactFrac; if (c.is(29, 1)) s += 0.6; if (c.multiCount(37) >= 3) s += 0.6; if (c.is(100, 1)) s += 0.3; if (c.is(61, 1)) s += 0.2; if (c.is(67, 1)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.3 * c.nat + 1.1 * c.nofactFrac; s += 0.6 * c.g(29, 1); if (c.multiCount(37) >= 3) s += 0.6; s += 0.3 * c.g(100, 1) + 0.2 * c.g(61, 1) + 0.3 * c.g(67, 1); return s; } },
     { name: 'The Idealist',
       blurb: 'Mind is not a late arrival in a dead universe but close to its ground floor. The hard problem is hard for a reason, and reality may be more mental than the physicalists allow. Berkeley, Leibniz and the panpsychists keep you company.',
-      score: function (c) { var s = 0.9 * (-c.phys); if (c.is(6, 0)) s += 0.6; if (c.is(16, 1)) s += 0.3; if (c.is(50, 0) || c.is(50, 4)) s += 0.4; if (c.is(59, 0)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.9 * (-c.phys); s += 0.6 * c.g(6, 0) + 0.3 * c.g(16, 1) + 0.4 * Math.max(c.g(50, 0), c.g(50, 4)) + 0.2 * c.g(59, 0); return s; } },
     { name: 'The Egalitarian Humanist',
       blurb: 'Justice is the first virtue of institutions, and a fair society is one that works for everyone. You pair a realist conscience with a reformer’s politics, in the tradition of Rawls and Mill.',
-      score: function (c) { var s = 1.0 * c.egal + 0.4 * c.real; if (c.is(78, 1)) s += 0.4; if (c.is(23, 1)) s += 0.4; if (c.is(53, 1)) s += 0.2; return s; } },
+      score: function (c) { var s = 1.0 * c.egal + 0.4 * c.real; s += 0.4 * c.g(78, 1) + 0.4 * c.g(23, 1) + 0.2 * c.g(53, 1); return s; } },
 
     /* ---- the niche gallery: each of these is gated behind one or more
      * distinctive answer picks, so it only surfaces for a profile that
@@ -661,104 +699,124 @@
 
     { name: 'The Stoic',
       blurb: 'Virtue is the only true good, and the rest — fortune, comfort, even your own death — is to be met with equanimity. You live according to nature, master what is yours to master, and let go of the rest. Epictetus, Seneca and Marcus Aurelius walk beside you.',
-      score: function (c) { var s = 0.9 * c.share(20, 2) + 0.3 * c.nat; if (c.is(82, 0)) s += 0.3; if (c.is(33, 1)) s += 0.3; if (c.is(62, 1)) s += 0.3; if (c.is(7, 0) || c.is(7, 2)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.9 * c.share(20, 2) + 0.3 * c.nat; s += 0.3 * c.g(82, 0) + 0.3 * c.g(33, 1) + 0.3 * c.g(62, 1) + 0.3 * Math.max(c.g(7, 0), c.g(7, 2)); return s; } },
 
     { name: 'The Hedonist',
       blurb: 'A life goes well to the exact degree it feels good from the inside. Pleasure is the coin of value and pain its only debit; the rest is bookkeeping. Epicurus and Bentham raise a glass to you.',
-      score: function (c) { var s = 0.4 * c.cons; if (c.is(99, 0)) s += 1.2; if (c.is(33, 0)) s += 0.5; s += 0.3 * c.share(20, 1); return s; } },
+      score: function (c) { var s = 0.4 * c.cons; s += 1.2 * c.g(99, 0) + 0.5 * c.g(33, 0) + 0.3 * c.share(20, 1); return s; } },
 
     { name: 'The Eliminativist',
       blurb: 'The mind’s furniture — beliefs, desires, qualia, the very feel of experience — may be folk theory headed for the scrap heap, the way phlogiston and humours were. A mature neuroscience need not vindicate our self-image. Patricia and Paul Churchland are your fellow travellers.',
-      score: function (c) { var s = 0.8 * c.phys; if (c.is(50, 1)) s += 1.0; if (c.is(83, 3)) s += 0.5; if (c.is(59, 1)) s += 0.4; if (c.is(30, 0)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.8 * c.phys; s += 1.0 * c.g(50, 1) + 0.5 * c.g(83, 3) + 0.4 * c.g(59, 1) + 0.3 * c.g(30, 0); return s; } },
 
     { name: 'The Panpsychist',
       blurb: 'Consciousness isn’t a late miracle bolted onto dead matter — it goes all the way down, a fundamental feature of the world like mass or charge. The hard problem is real, and this is how you dissolve it. Galen Strawson, Goff and (a version of) Russell keep you company.',
-      score: function (c) { var s = 0.5 * (-c.phys); if (c.is(50, 4)) s += 1.3; if (c.is(59, 0)) s += 0.3; if (c.is(58, 3)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.5 * (-c.phys); s += 1.3 * c.g(50, 4) + 0.3 * c.g(59, 0) + 0.2 * c.g(58, 3); return s; } },
 
     { name: 'The Cartesian Dualist',
       blurb: 'Mind and matter are two different things, and no rearrangement of atoms will ever add up to the felt redness of red. The self is more than its substrate, and a zombie twin is at least conceivable. Descartes — and, in his own way, Chalmers — stand with you.',
-      score: function (c) { var s = 0.6 * (-c.phys); if (c.is(50, 0)) s += 1.0; if (c.is(22, 2)) s += 0.4; if (c.is(30, 2)) s += 0.3; if (c.is(59, 0)) s += 0.3; if (c.is(26, 1)) s += 0.2; return s; } },
+      /* tightened: "dualism" (q50, ~22%) is also picked by Idealists and
+       * panpsychist-leaners, so it no longer carries this on its own — the
+       * zombie / further-fact / hard-problem corroborators have to show up. */
+      score: function (c) { var s = 0.6 * (-c.phys); s += 0.8 * c.g(50, 0) + 0.4 * c.g(22, 2) + 0.3 * c.g(30, 2) + 0.3 * c.g(59, 0) + 0.2 * c.g(26, 1); return s; } },
 
     { name: 'The Nominalist',
       blurb: 'You travel light through ontology. Numbers, properties, possible worlds, even ordinary composite objects — you suspect the world contains far fewer of these than our talk suggests. Ockham’s razor is less a tool than a temperament. Goodman and Field would approve.',
-      score: function (c) { var s = 0.8 * (-c.plat); if (c.is(2, 1)) s += 0.8; if (c.is(81, 4)) s += 0.5; if (c.is(79, 2)) s += 0.4; if (c.is(66, 0)) s += 0.3; if (c.is(67, 2)) s += 0.3; return s; } },
+      /* tightened: a lone "nominalism" pick on q2 is a ~42% answer, so it can't
+       * carry the type any more — it leans on the sparse-ontology axis plus the
+       * genuinely distinctive nonexistent-properties / nonexistent-worlds picks. */
+      score: function (c) { var s = 0.9 * (-c.plat); s += 0.45 * c.g(2, 1) + 0.6 * c.g(81, 4) + 0.5 * c.g(79, 2) + 0.3 * c.g(66, 0) + 0.3 * c.g(67, 2); return s; } },
 
     { name: 'The Libertarian',
       blurb: 'Liberty first. A just order is one of free people and voluntary exchange, with the state kept on a short leash and property rights taken seriously. Nozick, Hayek and the classical liberals are your tradition.',
-      score: function (c) { var s = 0.7 * (-c.egal); if (c.is(23, 2)) s += 0.7; if (c.is(78, 0)) s += 0.4; if (c.is(65, 0)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.7 * (-c.egal); s += 0.7 * c.g(23, 2) + 0.4 * c.g(78, 0) + 0.2 * c.g(65, 0); return s; } },
 
     { name: 'The Communitarian',
       blurb: 'Selves are not free-floating choosers but children of a particular community, its language and its goods. Abstract individualism misses what actually binds and shapes us. MacIntyre, Taylor and Sandel speak your language.',
-      score: function (c) { var s = 0; if (c.is(23, 0)) s += 1.3; if (c.is(68, 1)) s += 0.3; s += 0.2 * c.real; return s; } },
+      /* tightened: the single q23 "communitarianism" pick (~27%) no longer
+       * dominates; the political axis and the corroborating picks carry it. */
+      score: function (c) { var s = 0.2 * c.real; s += 0.8 * c.g(23, 0) + 0.4 * c.g(68, 1); return s; } },
 
     { name: 'The Scientific Realist',
       blurb: 'Our best theories are roughly true, electrons and all — the success of science would be a miracle otherwise. Where the lab speaks, metaphysics should listen, and laws are just the world’s deep regularities. Boyd, Psillos and the heirs of Quine are your camp.',
       /* scientific realism is a ~72% majority, so it earns only a small bonus;
        * the weight rides on the more distinctive Humean-laws / gene's-eye picks. */
-      score: function (c) { var s = 0.45 * c.phys + 0.45 * c.emp + 0.3 * c.nat; if (c.is(25, 0)) s += 0.5; if (c.is(11, 0)) s += 0.5; if (c.is(97, 0)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.45 * c.phys + 0.45 * c.emp + 0.3 * c.nat; s += 0.5 * c.g(25, 0) + 0.5 * c.g(11, 0) + 0.3 * c.g(97, 0); return s; } },
 
     { name: 'The Instrumentalist',
       blurb: 'Theories are instruments, not portraits. You happily use talk of quarks and fields to save the phenomena while staying agnostic about the unobservable machinery behind them. Van Fraassen’s constructive empiricism is your home.',
-      score: function (c) { var s = 0.4 * c.emp; if (c.is(25, 1)) s += 1.2; if (c.is(11, 0)) s += 0.2; if (c.is(29, 1)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.4 * c.emp; s += 1.2 * c.g(25, 1) + 0.2 * c.g(11, 0) + 0.2 * c.g(29, 1); return s; } },
 
     { name: 'The Transhumanist',
       blurb: 'You are your pattern, not your meat. Upload it, copy it, edit it, extend it — what matters survives the substrate, and there’s no good reason to stop at the human as we found it. Parfit’s reductionism meets the engineers’ optimism.',
       /* rides on the distinctive "the upload/copy is still me" survival picks
        * (~27-35%), not on the majority "genetic engineering / future AI is fine"
        * answers, which would otherwise fire for most respondents. */
-      score: function (c) { var s = 0; if (c.is(70, 0)) s += 0.7; if (c.is(26, 0)) s += 0.7; if (c.is(50, 2)) s += 0.4; if (c.is(62, 0)) s += 0.3; if (c.is(60, 0)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.7 * c.g(70, 0) + 0.7 * c.g(26, 0) + 0.4 * c.g(50, 2) + 0.3 * c.g(62, 0) + 0.2 * c.g(60, 0); return s; } },
 
     { name: 'The Sentientist',
       blurb: 'The moral circle is drawn by the capacity to suffer, not by species membership. If it can feel, its pain counts — and that has unsettling consequences for the dinner plate and the wider biosphere. Singer and Bentham’s “Can they suffer?” are your north star.',
-      score: function (c) { var s = 0.4 * c.cons; if (c.is(32, 2)) s += 0.8; if (c.is(32, 1)) s += 0.5; if (c.is(53, 1)) s += 0.6; if (c.is(74, 2)) s += 0.3; if (c.is(74, 4)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.4 * c.cons; s += 0.8 * c.g(32, 2) + 0.5 * c.g(32, 1) + 0.6 * c.g(53, 1) + 0.3 * c.g(74, 2) + 0.2 * c.g(74, 4); return s; } },
 
     { name: 'The Humean',
       blurb: 'Causation is regularity, laws are summaries, reason is the slave of the passions, and the world hands us no necessary connections — only constant conjunctions we can’t help projecting. The good-natured skeptic of the Treatise is your patron.',
-      score: function (c) { var s = 0.4 * c.emp; if (c.is(11, 0)) s += 0.7; if (c.is(82, 1)) s += 0.5; if (c.is(61, 1)) s += 0.3; if (c.is(80, 1)) s += 0.3; if (c.is(47, 0)) s += 0.2; if (c.is(47, 3)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.4 * c.emp; s += 0.7 * c.g(11, 0) + 0.5 * c.g(82, 1) + 0.3 * c.g(61, 1) + 0.3 * c.g(80, 1) + 0.2 * c.g(47, 0) + 0.3 * c.g(47, 3); return s; } },
 
     { name: 'The Phenomenologist',
       blurb: 'Begin with the things themselves as they show up in lived experience, before science carves them up. The texture of consciousness is the datum, not an embarrassment to be explained away. Husserl, Merleau-Ponty and Heidegger set your method.',
-      score: function (c) { var s = 0; if (c.is(37, 7)) s += 1.0; if (c.is(15, 1)) s += 0.4; if (c.is(59, 0)) s += 0.2; s += 0.2 * (-c.phys); return s; } },
+      score: function (c) { var s = 0.2 * (-c.phys); s += 1.0 * c.g(37, 7) + 0.4 * c.g(15, 1) + 0.2 * c.g(59, 0); return s; } },
 
     { name: 'The Conceptual Analyst',
       blurb: 'Philosophy advances by getting clear — unpacking concepts, drawing distinctions, and testing them against cases until the confusion dissolves. Rigour and the a priori are not optional extras. Frege, Russell and the analytic mainstream are your lineage.',
       /* keyed on the analytic toolkit, NOT on rationalism — plenty of
        * empiricists do conceptual analysis, and tying it to c.rat (a minority
        * lean) was quietly starving the type. Moderate weights keep it mid-pack. */
-      score: function (c) { var s = 0.4 * c.is(37, 0) + 0.35 * c.is(37, 4); if (c.is(1, 0)) s += 0.35; if (c.is(4, 0)) s += 0.3; if (c.is(12, 0)) s += 0.2; if (c.is(43, 0)) s += 0.2; return s; } },
+      score: function (c) { var s = 0.4 * c.g(37, 0) + 0.35 * c.g(37, 4); s += 0.35 * c.g(1, 0) + 0.3 * c.g(4, 0) + 0.2 * c.g(12, 0) + 0.2 * c.g(43, 0); return s; } },
 
     { name: 'The Critical Theorist',
       blurb: 'Concepts have histories and interests; “neutral” reason often serves power. You read philosophy genealogically and politically, asking who benefits and what is being naturalised. Nietzsche, Foucault and the Frankfurt School arm your suspicion.',
-      score: function (c) { var s = 0.2 * (-c.real) + 0.2 * c.egal; if (c.is(37, 10)) s += 0.7; if (c.is(37, 12)) s += 0.6; if (c.is(98, 1)) s += 0.4; if (c.is(89, 2)) s += 0.3; if (c.is(78, 1)) s += 0.2; return s; } },
-
-    { name: 'The Moral Particularist',
-      blurb: 'There are no exceptionless moral rules — what counts in favour of an act in one case can count against it in another. Good judgment, not a codebook, is the heart of ethics. Jonathan Dancy is your standard-bearer.',
-      score: function (c) { var s = 0; if (c.is(71, 1)) s += 1.2; s += 0.4 * c.share(20, 2); if (c.is(37, 13)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.2 * (-c.real) + 0.2 * c.egal; s += 0.7 * c.g(37, 10) + 0.6 * c.g(37, 12) + 0.4 * c.g(98, 1) + 0.3 * c.g(89, 2) + 0.2 * c.g(78, 1); return s; } },
 
     { name: 'The Error Theorist',
       blurb: 'Moral claims really do try to state objective facts — and every last one of them is false, because there are no such facts to state. The whole institution rests on a deep and useful mistake. J. L. Mackie is your unflinching guide.',
-      score: function (c) { var s = 0.5 * (-c.real); if (c.is(72, 4)) s += 1.3; if (c.is(17, 0)) s += 0.4; if (c.is(14, 1)) s += 0.3; return s; } },
+      score: function (c) { var s = 0.5 * (-c.real); s += 1.3 * c.g(72, 4) + 0.4 * c.g(17, 0) + 0.3 * c.g(14, 1); return s; } },
 
     { name: 'The Expressivist',
       blurb: 'To call something wrong isn’t to report a fact but to voice an attitude — boo and hooray, refined into something that can be reasoned with. Morality is for coordinating feeling, not mirroring the world. Blackburn and Gibbard are your allies.',
-      score: function (c) { var s = 0.3 * (-c.real); if (c.is(72, 3)) s += 1.3; if (c.is(17, 1)) s += 0.5; return s; } },
-
-    { name: 'The Modal Realist',
-      blurb: 'Possible worlds aren’t convenient fictions or abstract sets — they are concrete universes, every bit as real as this one, just spatiotemporally cut off from us. It’s a wild ontology, but it pays its way. David Lewis is your fearless leader.',
-      score: function (c) { var s = 0.2 * c.plat; if (c.is(79, 1)) s += 1.8; return s; } },
+      score: function (c) { var s = 0.3 * (-c.real); s += 1.3 * c.g(72, 3) + 0.5 * c.g(17, 1); return s; } },
 
     { name: 'The Reductionist',
       blurb: 'There is no deep, further fact of personal identity — just bundles of physical and psychological continuity, and what we should care about is that, not some glowing ego thread. Survival comes in degrees. Parfit, and a long Buddhist tradition, got here before you.',
-      score: function (c) { var s = 0; if (c.is(26, 0)) s += 0.6; if (c.is(70, 0)) s += 0.5; if (c.is(22, 1)) s += 0.5; if (c.is(7, 2)) s += 0.4; if (c.is(22, 2)) s -= 0.6; return s; } },
-
-    { name: 'The Mysterian',
-      blurb: 'Consciousness is a real, physical phenomenon — and one our minds may simply be the wrong shape to ever understand, the way a dog can’t do calculus. The hard problem is hard because of us, not the world. Colin McGinn named your stance.',
-      score: function (c) { var s = 0.3 * c.phys; if (c.is(59, 0)) s += 0.6; if (c.is(30, 1)) s += 0.7; return s; } },
-
-    { name: 'The Dialetheist',
-      blurb: 'Some contradictions are simply true. The liar sentence, certain paradoxes at the limits of thought — rather than explaining them away, you accept them and reform logic to cope. Graham Priest is your improbable champion.',
-      score: function (c) { var s = 0; if (c.is(96, 2)) s += 1.6; if (c.is(96, 1)) s += 0.3; if (c.is(12, 1)) s += 0.4; return s; } }
+      score: function (c) { var s = 0.6 * c.g(26, 0) + 0.5 * c.g(70, 0) + 0.5 * c.g(22, 1) + 0.4 * c.g(7, 2) - 0.6 * c.g(22, 2); return s; } }
   ];
+
+  /* ---- BADGES: distinctive single positions that decorate whatever headline
+   * archetype you land on, rather than competing to BE the headline. Each was
+   * previously a niche archetype that, on inspection, was really one rare
+   * checkbox dressed up as a worldview — too thin to headline, too fun to drop.
+   * `test` gates on `c.g` so only a real commitment (conviction, or a solid
+   * un-hedged lean ≥ 0.5) earns the badge; a hedged lean does not. The blurb
+   * survives as the click-to-expand popup. ---- */
+  var BADGES = [
+    { name: 'Modal Realist',
+      blurb: 'Possible worlds aren’t convenient fictions or abstract sets — they are concrete universes, every bit as real as this one, just spatiotemporally cut off from us. It’s a wild ontology, but it pays its way. David Lewis is your fearless leader.',
+      test: function (c) { return c.g(79, 1) >= 0.5; } },
+    { name: 'Dialetheist',
+      blurb: 'Some contradictions are simply true. The liar sentence, certain paradoxes at the limits of thought — rather than explaining them away, you accept them and reform logic to cope. Graham Priest is your improbable champion.',
+      test: function (c) { return c.g(96, 2) >= 0.5; } },
+    { name: 'Mysterian',
+      blurb: 'Consciousness is a real, physical phenomenon — and one our minds may simply be the wrong shape to ever understand, the way a dog can’t do calculus. The hard problem is hard because of us, not the world. Colin McGinn named your stance.',
+      /* the McGinn signature needs BOTH halves: a real hard problem AND zombies
+       * that are conceivable but not metaphysically possible (i.e. physicalism). */
+      test: function (c) { return c.g(59, 0) >= 0.5 && c.g(30, 1) >= 0.5; } },
+    { name: 'Moral Particularist',
+      blurb: 'There are no exceptionless moral rules — what counts in favour of an act in one case can count against it in another. Good judgment, not a codebook, is the heart of ethics. Jonathan Dancy is your standard-bearer.',
+      test: function (c) { return c.g(71, 1) >= 0.5; } }
+  ];
+
+  function computeBadges(c) {
+    return BADGES.filter(function (b) { return b.test(c); });
+  }
 
   function chooseArchetype(c) {
     if (c.answered < 8) {
@@ -793,6 +851,23 @@
     return tags.slice(0, 5).map(function (t) { return t.label; });
   }
 
+  /* the earned badges from the most recent render, so the delegated click
+   * handler can pull a badge's blurb without re-running the scoring. */
+  var lastBadges = [];
+
+  /* a row of badge chips + a shared popover the chips open. Each chip is a
+   * button; clicking it shows that badge's blurb below the row (clicking the
+   * same chip again, or another, toggles/switches it). */
+  function renderBadges(badges) {
+    return '<div class="badges">' +
+      '<span class="badges-label">Also</span>' +
+      badges.map(function (b, i) {
+        return '<button type="button" class="badge" data-badge-toggle="' + i + '" aria-expanded="false">✦ ' + esc(b.name) + '</button>';
+      }).join('') +
+      '</div>' +
+      '<div class="badge-pop" id="badgePop" hidden></div>';
+  }
+
   /* ============================================================ *
    *  RESULTS
    * ============================================================ */
@@ -803,6 +878,8 @@
     var c = buildCtx();
     var arch = chooseArchetype(c);
     var axes = computeAxes();
+    var badges = arch.name === 'The Sphinx' ? [] : computeBadges(c);
+    lastBadges = badges;
 
     /* archetype card */
     el('archetype').innerHTML =
@@ -810,6 +887,7 @@
       '<h2>' + esc(arch.name) + '</h2>' +
       '<p>' + arch.blurb + '</p>' +
       (arch.tags.length ? '<div class="tags">' + arch.tags.map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '</div>' : '') +
+      (badges.length ? renderBadges(badges) : '') +
       '<div class="tags" style="margin-top:14px"><span class="tag muted">' +
         c.answered + ' / 100 answered · ' + Math.round(c.agnosticFrac * 100) + '% agnostic</span></div>';
 

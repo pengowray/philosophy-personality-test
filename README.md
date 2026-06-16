@@ -49,13 +49,19 @@ matter, `S` skip.
 
 ## Results
 
-1. **Archetype** — picked from a gallery of 30-plus, e.g. *The Naturalist, The Kantian,
+1. **Archetype** — picked from a gallery of 25-plus, e.g. *The Naturalist, The Kantian,
    The Utilitarian, The Existentialist, The Pragmatist, The Skeptic, The Deflationist…*,
    chosen from your overall leanings. Common archetypes score off the axes; niche ones
-   (*The Panpsychist, The Modal Realist, The Dialetheist, The Error Theorist…*) are gated
-   behind distinctive answer picks, so they only surface for a profile that earns them.
+   (*The Panpsychist, The Eliminativist, The Error Theorist…*) are gated behind distinctive
+   answer picks, so they only surface for a profile that earns them. Every gate is
+   **strength-aware** — a conviction counts full, a bare lean about half, a hedged "…but"
+   lean less again — so a tentative answer can't railroad you into a niche label.
    *The Skeptic* falls out of heavy **agnostic** use (suspending judgment); *The Deflationist*
    from heavy **no-fact-of-the-matter** use (dissolving the questions).
+   - **Badges** — a few distinctive single positions (*Modal Realist, Dialetheist, Mysterian,
+     Moral Particularist*) are too thin to headline but too fun to drop, so they appear as
+     stackable badges that decorate whatever archetype you land on. Click one to read its blurb.
+     You earn a badge only by committing to the position, not by a hedged lean.
 2. **Where you lean** — seven signed axes (physicalist↔non-physicalist, empiricist↔rationalist,
    moral anti-realist↔realist, consequentialist↔deontological, naturalist↔theist,
    libertarian↔egalitarian, sparse↔abundant ontology), weighted by how firmly you answered.
