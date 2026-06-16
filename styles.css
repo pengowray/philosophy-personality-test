@@ -439,10 +439,16 @@ h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.08; margin: 0 0 14px; let
 }
 .who.me::before { background: var(--accent); }
 .who.friend::before { background: var(--friend); }
+/* view-mode overlay: the viewed result ("Them") is the accent primary, your
+ * own answers ("You") are the orange overlay — matches the read-only highlights */
+.who.them::before { background: var(--accent); }
+.who.you::before { background: var(--friend); }
 
 /* both people's dots share one axis track */
 .axis-dot.me { background: var(--accent); }
 .axis-dot.friend { background: var(--friend); width: 16px; height: 16px; }
+.axis-dot.them { background: var(--accent); }
+.axis-dot.you { background: var(--friend); width: 16px; height: 16px; }
 
 .friend-diff {
   display: flex; flex-direction: column; gap: 4px;
@@ -457,6 +463,88 @@ h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.08; margin: 0 0 14px; let
 @media (max-width: 560px) {
   .compare-cols { grid-template-columns: 1fr; }
 }
+
+/* ============================================================ *
+ *  READ-ONLY "viewing a shared result" mode
+ * ============================================================ */
+/* the persistent banner: sticky strip above everything, below the fixed
+ * theme toggle (z 20) but above the quiz topbar (z 5) */
+.view-bar {
+  position: sticky; top: 0; z-index: 15;
+  background: var(--accent-soft); border-bottom: 1px solid var(--accent-border);
+  backdrop-filter: blur(8px);
+}
+.view-bar[hidden] { display: none; }
+.view-bar-inner {
+  max-width: 880px; margin: 0 auto; padding: 9px 56px 9px 20px;
+  display: flex; align-items: center; gap: 9px 16px; flex-wrap: wrap;
+}
+.vb-label { font-size: 13px; color: var(--accent-ink); font-weight: 600; }
+.vb-label b { font-weight: 800; }
+.vb-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.vb-primary {
+  font-family: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer;
+  background: var(--accent-btn); color: #fff; border: 1px solid transparent;
+  border-radius: 9px; padding: 7px 14px; box-shadow: 0 4px 12px rgba(83, 74, 183, .25);
+  transition: background .15s ease, transform .08s ease;
+}
+.vb-primary:hover { background: var(--accent-btn-hover); }
+.vb-primary:active { transform: translateY(1px); }
+.vb-toggle {
+  font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: var(--panel); color: var(--ink-soft); border: 1px solid var(--border-strong);
+  border-radius: 9px; padding: 6px 12px 6px 9px; display: inline-flex; align-items: center; gap: 7px;
+}
+.vb-toggle i {
+  width: 26px; height: 15px; border-radius: 999px; background: var(--border-strong);
+  position: relative; transition: background .15s ease; flex: none;
+}
+.vb-toggle i::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+  border-radius: 50%; background: #fff; transition: transform .15s ease;
+}
+.vb-toggle.on { color: var(--friend); border-color: var(--friend); }
+.vb-toggle.on i { background: var(--friend); }
+.vb-toggle.on i::after { transform: translateX(11px); }
+.vb-adopt {
+  font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: none; border: none; color: var(--accent-ink);
+  text-decoration: underline; text-underline-offset: 2px; padding: 6px 4px;
+}
+.vb-adopt:hover { color: var(--accent); }
+/* push the sticky quiz topbar below the (variable-height) banner */
+body.is-viewing .topbar { top: var(--viewbar-h, 0); }
+/* the keyboard-shortcut hint under the quiz is meaningless while read-only */
+body.is-viewing #screen-quiz > .note { display: none; }
+
+/* quiz: your own pick marked over their (accent) highlight */
+.opt.opt-you { outline: 2px dashed var(--friend); outline-offset: -2px; }
+.opt.opt-you .pick { opacity: 1; color: var(--friend); }
+.qcompare {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 8px;
+  font-size: 13.5px; color: var(--ink-soft); margin: 13px 2px 0;
+  padding-top: 12px; border-top: 1px dashed var(--border);
+}
+.qcompare .who { flex: none; }
+.qcompare .qcsep { color: var(--ink-faint); }
+.qcompare i { color: var(--ink-faint); }
+
+/* results: comparison summary + per-cell "You" line */
+.compare-summary {
+  font-size: 14px; color: var(--ink-soft); line-height: 1.6;
+  background: var(--detail-bg); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px; margin: 0 0 18px;
+}
+.compare-summary .who { display: inline-flex; vertical-align: baseline; }
+.cell-you {
+  font-size: 13px; color: var(--ink-soft); margin-top: 7px;
+  padding-top: 7px; border-top: 1px dashed var(--border);
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+}
+.cell-you .who { flex: none; }
+.cell-you i { color: var(--ink-faint); }
+.cell-you.agree { border-top-color: var(--good); }
+.cell-you.disagree, .cell-you.partial { border-top-color: var(--friend); }
 
 footer.foot { text-align: center; font-size: 12.5px; color: var(--ink-faint); margin-top: 40px; line-height: 1.7; }
 footer.foot a { color: var(--ink-soft); }

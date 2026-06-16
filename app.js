@@ -19,9 +19,19 @@
   var THEME_KEY = 'ppt_theme';
   var W_FIRM = 1.0, W_LEAN = 0.55, W_NF = 0.6;   // W_NF: weight of an inferred "no fact of the matter" lean
   var W_BUT = 0.8;   // a hedged ("…, but") answer counts for a little less
-  var loadedFromShare = false;
   var friendAnswers = null;   // a friend's decoded answers, pasted on the results page (session only)
   var theme = 'light';   // 'light' | 'dark' — reconciled in initTheme()
+
+  /* ---- read-only "viewing a shared result" mode -------------------------
+   * Opening a `?s=` link no longer overwrites your answers; it shows the
+   * sharer's results read-only. The whole app renders from the global
+   * `answers`, so while viewing we simply point `answers` at the shared
+   * snapshot (everything renders for free) and stash your own answers in
+   * `myAnswers`. Every WRITE path is gated on `viewing`, so the snapshot
+   * (and your real localStorage data) stay untouched. */
+  var viewing = false;        // true when `answers` is a shared snapshot, not your own
+  var myAnswers = null;       // your own answers, stashed while viewing
+  var compareMine = false;    // overlay your own answers against theirs throughout
 
   /* answers[id] = { sel: number | number[] | null,
    *                 strength: 'lean'|'firm'|'agnostic'|'nofact'|'other',
@@ -40,6 +50,7 @@
 
   /* ---------- persistence + sharing ---------- */
   function save() {
+    if (viewing) return;   // read-only: viewing a shared snapshot never touches storage
     try { localStorage.setItem(STORE_KEY, JSON.stringify(answers)); } catch (e) {}
   }
   /* Drop the `?s=` share blob from the address bar (without reloading), keeping
@@ -67,34 +78,29 @@
       if (raw) local = JSON.parse(raw) || {};
     } catch (e) {}
 
-    /* A `?s=` share link you opened on purpose adopts its answers as your own —
-     * but it's a one-shot import, not sticky URL state. Two guards together kill
-     * the refresh-data-loss bug (open link → answer more → refresh → progress
-     * reverts to the link's snapshot):
-     *   1. never let a link SHRINK a fuller local copy — same guard the legacy
-     *      hash path below already uses (an empty/stale/smaller blob must not
-     *      wipe good local answers);
-     *   2. strip `?s=` from the URL after handling it, so a reload reads
-     *      localStorage instead of re-importing the frozen snapshot.
-     * Deliberately loading a *smaller* link as your own is still possible via
-     * the Restore button (promptImport) — explicit and confirmed. */
+    /* A `?s=` share link you opened on purpose is shown READ-ONLY (you're
+     * viewing the sharer's results), not imported over your own. We keep your
+     * answers in `myAnswers`, point `answers` at the snapshot, and never write
+     * storage while viewing — so the old refresh-data-loss bug can't happen and
+     * `?s=` can safely stay in the URL (a reload just re-enters the same view).
+     * Adopting a link as your own is still possible — explicitly — via the view
+     * bar's "Make these my results" or the intro Restore button. */
     var sParam = '';
     try { sParam = new URLSearchParams(location.search).get('s') || ''; } catch (e) {}
     if (sParam) {
       var fromQuery = decodeState(sParam);
-      stripShareParam();                              // one-shot: never re-import on refresh
-      if (fromQuery && nKeys(fromQuery) && nKeys(fromQuery) >= nKeys(local)) {
-        answers = fromQuery; loadedFromShare = true; save(); return;
+      if (fromQuery && nKeys(fromQuery)) {
+        myAnswers = local; answers = fromQuery; viewing = true; return;
       }
+      stripShareParam();                              // undecodable blob → drop it, fall through
     }
 
-    /* legacy base64 blob in the hash. Guard hard against the refresh-data-loss
-     * bug: a stale/partial blob must not shrink a fuller saved copy. */
+    /* legacy base64 blob in the hash — also viewed read-only, never imported. */
     var hash = location.hash.replace(/^#/, '');
     if (hash && !isRoute(hash)) {
       var fromHash = decodeState(hash);
-      if (fromHash && nKeys(fromHash) && nKeys(fromHash) >= nKeys(local)) {
-        answers = fromHash; loadedFromShare = true; save(); return;
+      if (fromHash && nKeys(fromHash)) {
+        myAnswers = local; answers = fromHash; viewing = true; return;
       }
     }
 
@@ -202,10 +208,42 @@
 
   function answeredCount() { return Object.keys(answers).length; }
   function pickOf(id) { var a = answers[id]; return a && typeof a.sel === 'number' ? a.sel : null; }
-  function isPick(id, idx) {
-    var a = answers[id]; if (!a) return false;
+  /* is option `idx` a pick for question `id` in answer-set `src`? */
+  function isPickSrc(src, id, idx) {
+    var a = src && src[id]; if (!a) return false;
     if (Array.isArray(a.sel)) return a.sel.indexOf(idx) !== -1;
     return a.sel === idx;
+  }
+  function isPick(id, idx) { return isPickSrc(answers, id, idx); }
+
+  /* do two answer-sets carry the same answers? (used to spot when a shared
+   * link is identical to your own results, so we can suppress "make mine") */
+  function normAns(a) {
+    if (!a) return '';
+    var sel = Array.isArray(a.sel) ? a.sel.slice().sort(function (x, y) { return x - y; }).join(',')
+      : (a.sel == null ? '' : String(a.sel));
+    return sel + '|' + (a.strength || '') + '|' + (a.but ? 'b' : '');
+  }
+  function answersEqual(a, b) {
+    a = a || {}; b = b || {};
+    var ka = Object.keys(a), kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (var i = 0; i < ka.length; i++) {
+      var k = ka[i];
+      if (!b.hasOwnProperty(k)) return false;
+      if (normAns(a[k]) !== normAns(b[k])) return false;
+    }
+    return true;
+  }
+  /* a deep-enough clone of an answer-set (answers are plain {sel,strength,but}) */
+  function cloneAnswers(src) {
+    var out = {};
+    Object.keys(src || {}).forEach(function (id) {
+      var a = src[id];
+      out[id] = { sel: Array.isArray(a.sel) ? a.sel.slice() : a.sel, strength: a.strength };
+      if (a.but) out[id].but = true;
+    });
+    return out;
   }
 
   /* ============================================================ *
@@ -226,6 +264,7 @@
 
   /* render whatever the current hash points at */
   function route() {
+    updateViewBar();   // keep the read-only banner in sync on every navigation
     var hash = location.hash.replace(/^#/, '');
     var m = /^q(\d+)$/.exec(hash);
     if (hash === 'results') {
@@ -254,6 +293,9 @@
     if (e.key !== STORE_KEY) return;
     var next = {};
     try { if (e.newValue) next = JSON.parse(e.newValue) || {}; } catch (err) {}
+    /* while viewing a shared snapshot, keep showing it — but quietly refresh
+     * the stashed copy of YOUR answers underneath, so an exit/compare is current. */
+    if (viewing) { myAnswers = next; return; }
     answers = next;
     var hash = location.hash.replace(/^#/, '');
     if (hash === 'results') { if (answeredCount() > 0) renderResults(); }
@@ -289,18 +331,29 @@
     var a = answers[q.id];
     var host = el('qhost');
     var nonpos = a && (a.strength === 'agnostic' || a.strength === 'nofact' || a.strength === 'other');
-    try { localStorage.setItem(POS_KEY, String(cur)); } catch (e) {}
+    if (!viewing) { try { localStorage.setItem(POS_KEY, String(cur)); } catch (e) {} }   // don't move your resume pointer while browsing theirs
 
+    /* `a` is the displayed answer (theirs while viewing). When comparing, also
+     * pull your own answer for this question so we can mark "You" inline. */
+    var cmp = viewing && compareMine;
     var optsHtml = q.opts.map(function (label, i) {
+      var theirs = a && !nonpos && isPick(q.id, i);
+      var yours = cmp && isPickSrc(myAnswers, q.id, i);
       var cls = 'opt';
-      if (a && !nonpos && isPick(q.id, i)) {
-        cls += multi ? ' firm' : (a.strength === 'firm' ? ' firm' : ' lean');
-      }
+      if (theirs) cls += multi ? ' firm' : (a.strength === 'firm' ? ' firm' : ' lean');
+      if (yours) cls += ' opt-you';
       var keycap = multi ? '✓' : (i + 1);
       var pickLabel = '';
-      if (a && !nonpos && isPick(q.id, i) && !multi) {
+      if (cmp) {
+        var who = [];
+        if (theirs) who.push('Them');
+        if (yours) who.push('You');
+        pickLabel = who.join(' · ');
+      } else if (viewing) {
+        if (theirs) pickLabel = multi ? 'Selected' : (a.strength === 'firm' ? 'Conviction' : 'Leaning');
+      } else if (theirs && !multi) {
         pickLabel = a.strength === 'firm' ? 'Conviction' : 'Leaning · click again for conviction';
-      } else if (multi && isPick(q.id, i)) {
+      } else if (theirs && multi) {
         pickLabel = 'Selected';
       }
       var note = q.optNotes && q.optNotes[i];
@@ -312,6 +365,18 @@
         '<span class="pick">' + pickLabel + '</span>' +
         '</button>';
     }).join('');
+
+    /* a one-line "Them: … · You: …" summary under the options — also carries
+     * non-option stances (agnostic / no-fact / other) and "no answer" cases */
+    var compareLine = '';
+    if (cmp) {
+      var tp = positionTextFor(q, answers), mp = positionTextFor(q, myAnswers);
+      function posBit(p) { return p ? esc(p.text) + (p.but ? ' · but' : '') : '<i>no answer</i>'; }
+      compareLine = '<p class="qcompare">' +
+        '<span class="who them">Them</span> ' + posBit(tp) +
+        '<span class="qcsep">·</span>' +
+        '<span class="who you">You</span> ' + posBit(mp) + '</p>';
+    }
 
     var hint = q.multi
       ? 'Select all that apply.'
@@ -325,6 +390,19 @@
     var butOn = a && a.but;
     var isLast = cur === QS.length - 1;
 
+    /* read-only (viewing) hides the hint and the answer/stance chips — only the
+     * answer highlights and the Back/Next navigation remain. */
+    var hintHtml = viewing ? '' : '<p class="qhint">' + hint + '</p>';
+    var extraHtml = viewing ? '' :
+      '<div class="qextra">' +
+        '<button class="chip ' + (agnosticOn ? 'on' : '') + '" data-act="agnostic">Agnostic / undecided</button>' +
+        '<button class="chip ' + (nofactOn ? 'on' : '') + '" data-act="nofact" title="A distinct stance: the question has no determinate answer — not that you are unsure, but that there is nothing to be right about.">No fact of the matter</button>' +
+        '<button class="chip ' + (otherOn ? 'on' : '') + '" data-act="other" title="None of these — some other position not captured by the options here.">Other</button>' +
+        '<button class="chip but ' + (butOn ? 'on' : '') + '" data-act="but" title="Keep your pick(s), but with reservations — it counts for a little less.">…but</button>' +
+        '<button class="chip" data-act="skip">Skip ›</button>' +
+        '<span class="spacer"></span>' +
+      '</div>';
+
     host.innerHTML =
       '<div class="qcard">' +
         '<span class="qcat" style="background:' + cc.fill + ';color:' + cc.title + '">' +
@@ -332,16 +410,10 @@
         '<div class="qtopic">Q' + q.id + ' · ' + esc(q.topic) + '</div>' +
         '<h2 class="qtext">' + esc(q.q) + '</h2>' +
         (q.detail ? '<p class="qdetail">' + esc(q.detail) + '</p>' : '') +
-        '<p class="qhint">' + hint + '</p>' +
+        hintHtml +
         '<div class="opts">' + optsHtml + '</div>' +
-        '<div class="qextra">' +
-          '<button class="chip ' + (agnosticOn ? 'on' : '') + '" data-act="agnostic">Agnostic / undecided</button>' +
-          '<button class="chip ' + (nofactOn ? 'on' : '') + '" data-act="nofact" title="A distinct stance: the question has no determinate answer — not that you are unsure, but that there is nothing to be right about.">No fact of the matter</button>' +
-          '<button class="chip ' + (otherOn ? 'on' : '') + '" data-act="other" title="None of these — some other position not captured by the options here.">Other</button>' +
-          '<button class="chip but ' + (butOn ? 'on' : '') + '" data-act="but" title="Keep your pick(s), but with reservations — it counts for a little less.">…but</button>' +
-          '<button class="chip" data-act="skip">Skip ›</button>' +
-          '<span class="spacer"></span>' +
-        '</div>' +
+        compareLine +
+        extraHtml +
         '<div class="navrow">' +
           '<button class="btn btn-ghost" data-act="prev"' + (cur === 0 ? ' disabled' : '') + '>‹ Back</button>' +
           '<button class="btn btn-primary" data-act="next">' + (isLast ? 'Finish & see results ›' : 'Next ›') + '</button>' +
@@ -371,6 +443,7 @@
   }
 
   function chooseOption(optIndex) {
+    if (viewing) return;   // read-only: can't change a shared snapshot
     var q = QS[cur];
     var a = answers[q.id];
     if (isMulti(q)) {
@@ -394,6 +467,8 @@
 
   function act(kind) {
     var q = QS[cur];
+    /* read-only: navigation still works, but stance buttons can't mutate a snapshot */
+    if (viewing && (kind === 'agnostic' || kind === 'nofact' || kind === 'other' || kind === 'but')) return;
     if (kind === 'agnostic') {
       if (answers[q.id] && answers[q.id].strength === 'agnostic') delete answers[q.id];
       else setAnswer(q.id, { sel: null, strength: 'agnostic' });
@@ -875,6 +950,21 @@
     if (answeredCount() === 0) { go('#', true); return; }
     show('results');
     window.scrollTo(0, 0);
+
+    /* third-person framing + hide own-session controls while viewing a shared
+     * result (Continue/Review/Start over act on YOUR data, not what's shown) */
+    var v = viewing;
+    function setTxt(id, t) { var n = el(id); if (n) n.textContent = t; }
+    setTxt('resultEyebrow', v ? 'A shared result' : 'Your results');
+    setTxt('titleMap', v ? 'Their profile map' : 'Your profile map');
+    setTxt('titleLean', v ? 'Where they lean' : 'Where you lean');
+    setTxt('titleCompare', v ? 'How they compare with philosophers' : 'How you compare with philosophers');
+    setTxt('breakdownNote', (v
+      ? 'Each card shows their answer and, where the survey covered it, a bar of how the profession split — their pick highlighted.'
+      : 'Each card shows your answer and, where the survey covered it, a bar of how the profession split — your pick highlighted.') +
+      ' Click any bar (or “details”) for the full breakdown.');
+    ['btnContinue', 'btnRetake', 'btnReset'].forEach(function (id) { var n = el(id); if (n) n.style.display = v ? 'none' : ''; });
+
     var c = buildCtx();
     var arch = chooseArchetype(c);
     var axes = computeAxes();
@@ -883,7 +973,7 @@
 
     /* archetype card */
     el('archetype').innerHTML =
-      '<div class="kicker">Your philosophical archetype</div>' +
+      '<div class="kicker">' + (viewing ? 'Their philosophical archetype' : 'Your philosophical archetype') + '</div>' +
       '<h2>' + esc(arch.name) + '</h2>' +
       '<p>' + arch.blurb + '</p>' +
       (arch.tags.length ? '<div class="tags">' + arch.tags.map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '</div>' : '') +
@@ -891,15 +981,25 @@
       '<div class="tags" style="margin-top:14px"><span class="tag muted">' +
         c.answered + ' / 100 answered · ' + Math.round(c.agnosticFrac * 100) + '% agnostic</span></div>';
 
-    /* axes */
-    el('axes').innerHTML = axes.map(renderAxis).join('');
+    /* axes — paired (them vs. you) with a summary line when comparing */
+    if (viewing && compareMine) {
+      var mineAx = computeAxes(myAnswers);
+      el('axes').innerHTML = renderCompareSummary(myAnswers, answers) +
+        axes.map(function (a, i) { return renderAxisPairView(a, mineAx[i]); }).join('');
+    } else {
+      el('axes').innerHTML = axes.map(renderAxis).join('');
+    }
 
     /* svg */
     var svg = buildProfileSVG();
     el('svgHost').innerHTML = svg;
 
-    /* compare with a friend (if one's link has been pasted) */
-    mountFriendCompare();
+    /* the "compare with a friend" paste box only makes sense on your OWN
+     * results; while viewing a shared result the view-bar "Compare to mine"
+     * toggle covers comparison, so hide the section. */
+    var fs = el('friendSection');
+    if (fs) fs.style.display = viewing ? 'none' : '';
+    if (!viewing) mountFriendCompare();
 
     /* how you compare with the profession */
     var cmp = el('compare');
@@ -942,24 +1042,61 @@
   }
   function positionText(q) { return positionTextFor(q, answers); }
 
+  /* agreement between two answer-sets on one question: null when either side
+   * has no position; else {score, kind: 'agree'|'partial'|'disagree'}. Shared
+   * by the friend comparison and the view-mode "compare to mine" overlay. */
+  function comparePair(mine, them, q) {
+    var a = posInfo(mine, q.id), b = posInfo(them, q.id);
+    if (!a || !b) return null;
+    var score, kind;
+    if (a.kind !== 'pos' || b.kind !== 'pos') {
+      score = (a.kind === b.kind) ? 1 : 0;
+      kind = score ? 'agree' : 'disagree';
+    } else {
+      var inter = a.sels.filter(function (i) { return b.sels.indexOf(i) !== -1; }).length;
+      var uni = a.sels.slice();
+      b.sels.forEach(function (i) { if (uni.indexOf(i) === -1) uni.push(i); });
+      score = uni.length ? inter / uni.length : 0;
+      kind = score === 1 ? 'agree' : (score > 0 ? 'partial' : 'disagree');
+    }
+    return { q: q, score: score, kind: kind };
+  }
+
   var STRENGTH_LABEL = { firm: 'Conviction', lean: 'Leaning', agnostic: 'Agnostic', nofact: 'No fact', other: 'Other', multi: 'Selected' };
 
+  /* your own answer to a question, as a "You: …" line — shown beneath each
+   * breakdown cell while comparing in view mode, tinted by agreement */
+  function cellYouLine(q) {
+    var mp = positionTextFor(q, myAnswers);
+    var pair = comparePair(myAnswers, answers, q);
+    var tint = pair ? pair.kind : 'na';
+    return '<div class="cell-you ' + tint + '"><span class="who you">You</span> ' +
+      (mp ? esc(mp.text) + (mp.but ? ' · but' : '') : '<i>no answer</i>') + '</div>';
+  }
+
   function renderBreakdown() {
+    var cmp = viewing && compareMine;
     return CATS.map(function (cat) {
       var cc = catColors(cat);
       var qs = QS.filter(function (q) { return q.cat === cat.key; });
       var cells = qs.map(function (q) {
         var p = positionText(q);
         var topic = '<a ' + qHref(q) + '>' + esc(q.topic) + '</a>';
-        if (!p) return '<div class="cell empty"><div class="t">' + topic + '</div><div class="v">—</div></div>';
+        var youLine = cmp ? cellYouLine(q) : '';
+        if (!p) {
+          return '<div class="cell empty' + (cmp ? ' cmp' : '') + '"><div class="t">' + topic + '</div>' +
+            '<div class="v">' + (cmp ? '<span class="who them">Them</span> <i>no answer</i>' : '—') + '</div>' +
+            youLine + '</div>';
+        }
         var sclass = p.strength === 'firm' ? 's-firm'
           : (p.strength === 'agnostic' ? 's-agno'
           : (p.strength === 'nofact' ? 's-nofact'
           : (p.strength === 'other' ? 's-other' : 's-lean')));
-        return '<div class="cell"><div class="t">' + topic + '</div>' +
-          '<div class="v" style="color:' + cc.text + '">' + esc(p.text) + '</div>' +
+        return '<div class="cell' + (cmp ? ' cmp' : '') + '"><div class="t">' + topic + '</div>' +
+          '<div class="v" style="color:' + cc.text + '">' + (cmp ? '<span class="who them">Them</span> ' : '') + esc(p.text) + '</div>' +
           '<span class="s ' + sclass + '">' + STRENGTH_LABEL[p.strength] +
             (p.but ? '<span class="s-but"> · but</span>' : '') + '</span>' +
+          youLine +
           renderSpread(q, cc) + '</div>';
       }).join('');
       return '<div class="cat-block">' +
@@ -1066,10 +1203,11 @@
   /* the per-option breakdown revealed when a spread is clicked. `rows` is
    * already sorted high→low; `other` is the residual "something else" share */
   function spreadDetail(rows, other) {
+    var pickLabel = viewing ? 'their pick' : 'your pick';
     var items = rows.map(function (r) {
       return '<li' + (r.on ? ' class="on"' : '') + '>' +
         '<span class="sd-opt">' + esc(r.name) +
-          (r.on ? '<span class="sd-you">your pick</span>' : '') + '</span>' +
+          (r.on ? '<span class="sd-you">' + pickLabel + '</span>' : '') + '</span>' +
         '<span class="sd-pct">' + Math.round(r.pct) + '%</span></li>';
     }).join('');
     if (other) {
@@ -1103,7 +1241,9 @@
     if (!window.PPT_SURVEY) return '';
     var rows = comparisonRows();
     if (rows.length < 3) {
-      return '<div class="compare-card"><p class="compare-lead">Answer a few more questions to see how your views sit against the profession.</p></div>';
+      return '<div class="compare-card"><p class="compare-lead">' +
+        (viewing ? 'Too few positions here to compare against the profession.'
+                 : 'Answer a few more questions to see how your views sit against the profession.') + '</p></div>';
     }
     var avg = rows.reduce(function (s, r) { return s + r.share; }, 0) / rows.length;
     var withPl = rows.filter(function (r) { return r.withPlurality; }).length;
@@ -1111,32 +1251,37 @@
     var heterodox = byShare.slice(0, 3);
     var mainstream = byShare.slice(-3).reverse();
 
+    /* third-person voice when viewing someone else's results */
+    var subj = viewing ? 'they' : 'you', Subj = viewing ? 'They' : 'You';
+    var poss = viewing ? 'their' : 'your', Poss = viewing ? 'Their' : 'Your';
+    var contr = viewing ? 'they’re' : 'you’re', label = viewing ? 'Them' : 'You';
+
     function line(r) {
       return '<li><a class="ct" ' + qHref(r.q) + '>' + esc(r.topic) + '</a>' +
         '<span class="cp">' + Math.round(r.share) + '% of philosophers</span></li>';
     }
     function fullLine(r) {
       return '<li' + (r.withPlurality ? '' : ' class="minority"') +
-        ' title="' + (r.withPlurality ? 'You sided with the most popular answer' : 'You took a minority position') + '">' +
+        ' title="' + (r.withPlurality ? Subj + ' sided with the most popular answer' : Subj + ' took a minority position') + '">' +
         '<a class="ct" ' + qHref(r.q) + '>' + esc(r.topic) + '</a>' +
-        '<span class="ca">You: ' + esc(r.yourAnswer) + '</span>' +
+        '<span class="ca">' + label + ': ' + esc(r.yourAnswer) + '</span>' +
         '<span class="cp">' + Math.round(r.share) + '%</span></li>';
     }
 
     return '<div class="compare-card">' +
-      '<p class="compare-lead">On the ' + rows.length + ' questions where you took a position, on average <b>' +
-        Math.round(avg) + '%</b> of surveyed philosophers shared your view. ' +
-        'You sided with the most popular answer on <b>' + withPl + ' of ' + rows.length + '</b>.</p>' +
+      '<p class="compare-lead">On the ' + rows.length + ' questions where ' + subj + ' took a position, on average <b>' +
+        Math.round(avg) + '%</b> of surveyed philosophers shared ' + poss + ' view. ' +
+        Subj + ' sided with the most popular answer on <b>' + withPl + ' of ' + rows.length + '</b>.</p>' +
       '<div class="compare-cols">' +
-        '<div class="compare-col"><h4>Your most heterodox positions</h4><ul>' + heterodox.map(line).join('') + '</ul></div>' +
-        '<div class="compare-col"><h4>Where you’re most mainstream</h4><ul>' + mainstream.map(line).join('') + '</ul></div>' +
+        '<div class="compare-col"><h4>' + Poss + ' most heterodox positions</h4><ul>' + heterodox.map(line).join('') + '</ul></div>' +
+        '<div class="compare-col"><h4>Where ' + contr + ' most mainstream</h4><ul>' + mainstream.map(line).join('') + '</ul></div>' +
       '</div>' +
       '<div class="compare-more">' +
         '<button class="link-btn compare-toggle" type="button" data-toggle-compare data-count="' + rows.length + '">' +
           'Show all ' + rows.length + ' positions ›</button>' +
-        '<div class="compare-full"><h4>Every position you took — least to most mainstream</h4><ul>' +
+        '<div class="compare-full"><h4>Every position ' + subj + ' took — least to most mainstream</h4><ul>' +
           byShare.map(fullLine).join('') + '</ul>' +
-          '<p class="compare-hint">Tap any question to re-read it and your answer.</p></div>' +
+          '<p class="compare-hint">Tap any question to re-read it and ' + poss + ' answer.</p></div>' +
       '</div>' +
       '<p class="compare-note">Spread shown against the <b>' + esc(PPT_SURVEY.meta.group.toLowerCase()) +
         '</b> of the 2020 PhilPapers Survey (n≈' + PPT_SURVEY.meta.n + '). ' +
@@ -1181,30 +1326,33 @@
     return { kind: 'pos', sels: sels };
   }
 
-  /* one row per question both people took a position on */
-  function friendRows() {
-    if (!friendAnswers) return [];
+  /* one row per question both answer-sets took a position on (Jaccard overlap
+   * of picks; agnostic/no-fact only match the very same stance — see comparePair) */
+  function compareRows(mine, them) {
     var rows = [];
     QS.forEach(function (q) {
-      var mine = posInfo(answers, q.id), theirs = posInfo(friendAnswers, q.id);
-      if (!mine || !theirs) return;
-      var score, kind;
-      if (mine.kind !== 'pos' || theirs.kind !== 'pos') {
-        /* agnostic / no-fact only match the very same stance */
-        score = (mine.kind === theirs.kind) ? 1 : 0;
-        kind = score ? 'agree' : 'disagree';
-      } else {
-        /* overlap of selected options (Jaccard) — exact for single answers,
-         * graded for combination / list-style ones */
-        var inter = mine.sels.filter(function (i) { return theirs.sels.indexOf(i) !== -1; }).length;
-        var uni = mine.sels.slice();
-        theirs.sels.forEach(function (i) { if (uni.indexOf(i) === -1) uni.push(i); });
-        score = uni.length ? inter / uni.length : 0;
-        kind = score === 1 ? 'agree' : (score > 0 ? 'partial' : 'disagree');
-      }
-      rows.push({ q: q, score: score, kind: kind });
+      var r = comparePair(mine, them, q);
+      if (r) rows.push(r);
     });
     return rows;
+  }
+  function friendRows() { return friendAnswers ? compareRows(answers, friendAnswers) : []; }
+
+  /* compact "you vs. this result" summary shown above the axes while comparing */
+  function renderCompareSummary(mine, them) {
+    var rows = compareRows(mine, them);
+    if (!rows.length) {
+      return '<p class="compare-summary">You and this result haven’t taken a position on any of the same questions yet.</p>';
+    }
+    var n = rows.length;
+    var agree = rows.filter(function (r) { return r.kind === 'agree'; }).length;
+    var partial = rows.filter(function (r) { return r.kind === 'partial'; }).length;
+    var disagree = rows.filter(function (r) { return r.kind === 'disagree'; }).length;
+    var avg = Math.round(rows.reduce(function (s, r) { return s + r.score; }, 0) / n * 100);
+    var partBit = partial ? ', partly overlap on <b>' + partial + '</b>' : '';
+    return '<p class="compare-summary">' +
+      '<span class="who you">You</span> and <span class="who them">this result</span> both took a position on <b>' + n + '</b> question' + (n === 1 ? '' : 's') + '. ' +
+      'You agree on <b>' + agree + '</b>' + partBit + ', and differ on <b>' + disagree + '</b> — about <b>' + avg + '%</b> overlap.</p>';
   }
 
   function leanLabel(ax) {
@@ -1227,6 +1375,23 @@
       '<div class="axis-track"><span class="mid"></span>' + dots + '</div>' +
       '<div class="axis-meta"><span class="who me">You</span> ' + esc(leanLabel(me)) +
         ' · <span class="who friend">Friend</span> ' + esc(leanLabel(fr)) + '</div>' +
+    '</div>';
+  }
+
+  /* view-mode axis pair: the viewed result ("Them", accent) and your overlay
+   * ("You", orange) — colours match the read-only highlights, not the friend
+   * feature's you-first scheme */
+  function renderAxisPairView(them, you) {
+    if (them.value == null && you.value == null) return '';
+    function pct(v) { return (v + 1) / 2 * 100; }
+    var dots = '';
+    if (them.value != null) dots += '<span class="axis-dot them" style="left:' + pct(them.value) + '%"></span>';
+    if (you.value != null) dots += '<span class="axis-dot you" style="left:' + pct(you.value) + '%"></span>';
+    return '<div class="axis">' +
+      '<div class="axis-ends"><span>' + esc(them.left) + '</span><span>' + esc(them.right) + '</span></div>' +
+      '<div class="axis-track"><span class="mid"></span>' + dots + '</div>' +
+      '<div class="axis-meta"><span class="who them">Them</span> ' + esc(leanLabel(them)) +
+        ' · <span class="who you">You</span> ' + esc(leanLabel(you)) + '</div>' +
     '</div>';
   }
 
@@ -1417,7 +1582,8 @@
     var y = 0;
 
     /* title */
-    parts.push('<text x="' + P + '" y="44" font-size="24" font-weight="600" fill="' + PG.title + '">My philosophical profile</text>');
+    var profileTitle = viewing ? 'A philosophical profile' : 'My philosophical profile';
+    parts.push('<text x="' + P + '" y="44" font-size="24" font-weight="600" fill="' + PG.title + '">' + profileTitle + '</text>');
     parts.push('<text x="' + P + '" y="68" font-size="13" fill="' + PG.sub + '">' + esc(answeredQ.length + ' of 100 questions answered · the 2020 PhilPapers Survey, as a personality test') + '</text>');
     y = 92;
 
@@ -1478,7 +1644,7 @@
     var H = y;
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" ' +
       'font-family="' + FONT + '">' +
-      '<title>My philosophical profile</title>' +
+      '<title>' + profileTitle + '</title>' +
       '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="' + PG.bg + '"/>' +
       parts.join('\n') +
       '</svg>';
@@ -1540,6 +1706,84 @@
     try { localStorage.removeItem(POS_KEY); } catch (e) {}
     go('#results', true);
     flash('Loaded ' + got + ' answer' + (got === 1 ? '' : 's') + ' from the link.');
+  }
+
+  /* ---------- read-only view mode: leave / adopt / compare ----------
+   * (the view bar that hosts these is rendered by updateViewBar) */
+
+  /* leave the shared view and go back to your own data (or start the test) */
+  function exitView() {
+    if (!viewing) return;
+    answers = myAnswers || {};
+    myAnswers = null; viewing = false; compareMine = false;
+    stripShareParam();
+    if (answeredCount() > 0) go('#results', true);
+    else startQuiz();                              // nothing of your own yet → begin
+  }
+  /* adopt the shared snapshot as your own answers (the deliberate "overwrite") */
+  function adoptView() {
+    if (!viewing) return;
+    var have = nKeys(myAnswers), got = answeredCount();
+    if (have && !confirm('Replace your ' + have + ' saved answer' + (have === 1 ? '' : 's') +
+        ' with the ' + got + ' from this shared result?')) return;
+    answers = cloneAnswers(answers);              // detach from the decoded snapshot
+    myAnswers = null; viewing = false; compareMine = false; cur = 0;
+    save();
+    try { localStorage.removeItem(POS_KEY); } catch (e) {}
+    stripShareParam();
+    go('#results', true);
+    flash('These are now your answers (' + got + ' question' + (got === 1 ? '' : 's') + ').');
+  }
+  /* flip the "compare to mine" overlay and re-render whatever screen we're on */
+  function toggleCompareMine() {
+    compareMine = !compareMine;
+    updateViewBar();
+    var hash = location.hash.replace(/^#/, '');
+    if (hash === 'results') renderResults();
+    else if (/^q\d+$/.test(hash)) renderQuestion();
+  }
+  /* the persistent read-only banner. Re-rendered on every route() so it stays
+   * in sync across intro / quiz / results. Hidden entirely when not viewing. */
+  function updateViewBar() {
+    var bar = el('viewBar');
+    if (!bar) return;
+    if (!viewing) {
+      bar.hidden = true; bar.innerHTML = '';
+      document.body.classList.remove('is-viewing');
+      document.documentElement.style.removeProperty('--viewbar-h');
+      return;
+    }
+    var haveMine = nKeys(myAnswers) > 0;
+    var identical = haveMine && answersEqual(answers, myAnswers);
+
+    var label = identical
+      ? 'Viewing a shared result — <b>identical to your own</b>.'
+      : 'Viewing a shared result · read-only';
+
+    var html = '<div class="view-bar-inner">' +
+      '<span class="vb-label">' + label + '</span>' +
+      '<span class="vb-actions">' +
+        '<button id="vbExit" class="vb-primary">' +
+          (haveMine ? '‹ Back to my results' : 'Start the test ›') + '</button>';
+    if (haveMine && !identical) {
+      html += '<button id="vbCompare" class="vb-toggle' + (compareMine ? ' on' : '') + '" ' +
+        'role="switch" aria-checked="' + (compareMine ? 'true' : 'false') + '">' +
+        '<i></i>Compare to mine</button>';
+    }
+    if (!identical) {
+      html += '<button id="vbAdopt" class="vb-adopt">Make these my results</button>';
+    }
+    html += '</span></div>';
+    bar.innerHTML = html;
+    bar.hidden = false;
+
+    var ex = el('vbExit'); if (ex) ex.addEventListener('click', exitView);
+    var cmp = el('vbCompare'); if (cmp) cmp.addEventListener('click', toggleCompareMine);
+    var ad = el('vbAdopt'); if (ad) ad.addEventListener('click', adoptView);
+
+    /* push the sticky quiz topbar below the (variable-height) banner */
+    document.body.classList.add('is-viewing');
+    document.documentElement.style.setProperty('--viewbar-h', bar.offsetHeight + 'px');
   }
   function flash(msg) {
     var n = h('<div style="position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#1f1e1d;color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.25)">' + esc(msg) + '</div>');
@@ -1641,12 +1885,12 @@
 
     updateResumeRow();
 
-    /* initial route. A shared link (?s=…) with enough answers jumps to
+    /* initial route. A shared link opened read-only lands on the sharer's
      * results; otherwise honour any explicit #route, else show the intro. */
     if (isRoute(location.hash.replace(/^#/, ''))) {
       route();
-    } else if (loadedFromShare && answeredCount() >= 8) {
-      go('#results', true);
+    } else if (viewing) {
+      go('#results', true);                     // show the shared result (drops a legacy blob hash)
     } else {
       go('#intro', true);                       // also cleans any legacy base64 hash out of the URL
     }

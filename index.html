@@ -19,6 +19,8 @@
 </head>
 <body>
 <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch theme"><span class="ti">☾</span></button>
+<!-- read-only banner shown while viewing a shared result; populated by app.js -->
+<div id="viewBar" class="view-bar" hidden></div>
 <div class="wrap">
 
   <!-- ============================ INTRO ============================ -->
@@ -87,7 +89,7 @@
   <!-- ============================ RESULTS ============================ -->
   <section id="screen-results" class="screen">
     <div class="result-head">
-      <span class="eyebrow">Your results</span>
+      <span class="eyebrow" id="resultEyebrow">Your results</span>
     </div>
 
     <div id="archetype" class="archetype-card"></div>
@@ -102,20 +104,22 @@
       <button id="btnReset" class="btn btn-ghost">Start over</button>
     </div>
 
-    <div class="section-title">Your profile map</div>
+    <div class="section-title" id="titleMap">Your profile map</div>
     <div id="svgHost" class="svg-card"></div>
 
-    <div class="section-title">Where you lean</div>
+    <div class="section-title" id="titleLean">Where you lean</div>
     <div id="axes" class="axes"></div>
 
-    <div class="section-title">Compare with a friend</div>
-    <div id="friendCompare"></div>
+    <div id="friendSection">
+      <div class="section-title">Compare with a friend</div>
+      <div id="friendCompare"></div>
+    </div>
 
-    <div class="section-title">How you compare with philosophers</div>
+    <div class="section-title" id="titleCompare">How you compare with philosophers</div>
     <div id="compare"></div>
 
     <div class="section-title">Every position, by field</div>
-    <p class="note" style="margin-top:-6px">
+    <p class="note" style="margin-top:-6px" id="breakdownNote">
       Each card shows your answer and, where the survey covered it, a bar of how the profession
       split — your pick highlighted. Click any bar (or “details”) for the full breakdown.
     </p>
