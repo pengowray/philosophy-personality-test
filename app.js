@@ -42,24 +42,51 @@
   function save() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(answers)); } catch (e) {}
   }
+  /* Drop the `?s=` share blob from the address bar (without reloading), keeping
+   * the path + hash route intact. A share link is a ONE-SHOT import: once its
+   * answers are adopted, a later refresh must restore from localStorage, not
+   * re-import the link's frozen snapshot. Leaving `?s=` in the URL is what let a
+   * friend's progress silently revert on every reload (the refresh-data-loss
+   * bug) — `go()` carries location.search across navigations, so it persisted. */
+  function stripShareParam() {
+    try {
+      var u = new URL(location.href);
+      if (!u.searchParams.has('s')) return;
+      u.searchParams.delete('s');
+      history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+    } catch (e) {}
+  }
   /* `#q5` / `#results` / `#intro` are routes; anything else in the hash is
    * treated as a (legacy) base64 share blob. New share links use `?s=`. */
   function isRoute(str) { return /^(intro|results|q\d+)$/.test(str); }
   function nKeys(o) { return o ? Object.keys(o).length : 0; }
   function load() {
-    var local = null;
+    var local = {};
     try {
       var raw = localStorage.getItem(STORE_KEY);
       if (raw) local = JSON.parse(raw) || {};
     } catch (e) {}
 
-    /* a `?s=` share link you opened on purpose adopts its answers as your own.
-     * Only when it actually carries answers — an empty blob must never wipe a
-     * good local copy. */
+    /* A `?s=` share link you opened on purpose adopts its answers as your own —
+     * but it's a one-shot import, not sticky URL state. Two guards together kill
+     * the refresh-data-loss bug (open link → answer more → refresh → progress
+     * reverts to the link's snapshot):
+     *   1. never let a link SHRINK a fuller local copy — same guard the legacy
+     *      hash path below already uses (an empty/stale/smaller blob must not
+     *      wipe good local answers);
+     *   2. strip `?s=` from the URL after handling it, so a reload reads
+     *      localStorage instead of re-importing the frozen snapshot.
+     * Deliberately loading a *smaller* link as your own is still possible via
+     * the Restore button (promptImport) — explicit and confirmed. */
     var sParam = '';
     try { sParam = new URLSearchParams(location.search).get('s') || ''; } catch (e) {}
-    var fromQuery = decodeState(sParam);
-    if (fromQuery && nKeys(fromQuery)) { answers = fromQuery; loadedFromShare = true; save(); return; }
+    if (sParam) {
+      var fromQuery = decodeState(sParam);
+      stripShareParam();                              // one-shot: never re-import on refresh
+      if (fromQuery && nKeys(fromQuery) && nKeys(fromQuery) >= nKeys(local)) {
+        answers = fromQuery; loadedFromShare = true; save(); return;
+      }
+    }
 
     /* legacy base64 blob in the hash. Guard hard against the refresh-data-loss
      * bug: a stale/partial blob must not shrink a fuller saved copy. */
@@ -71,7 +98,7 @@
       }
     }
 
-    answers = local || {};
+    answers = local;
   }
   /* ---- compact share codec --------------------------------------------
    * A share blob is just per-question records concatenated, no separators:
@@ -214,6 +241,25 @@
     }
   }
   window.addEventListener('popstate', route);
+
+  /* Multi-tab safety. Each tab keeps `answers` in memory and rewrites the whole
+   * blob on every save(), so without this a second tab — loaded with an older
+   * view — would overwrite a newer tab's progress the next time you clicked in
+   * it (last-write-wins). `storage` fires in OTHER tabs only (never the writer),
+   * so we adopt the freshly-written copy and re-render the current screen. The
+   * passive tab thus always catches up before it next saves, so clicking around
+   * in several tabs no longer drops answers. (removeItem → newValue null → a
+   * reset in another tab; mirror it.) */
+  window.addEventListener('storage', function (e) {
+    if (e.key !== STORE_KEY) return;
+    var next = {};
+    try { if (e.newValue) next = JSON.parse(e.newValue) || {}; } catch (err) {}
+    answers = next;
+    var hash = location.hash.replace(/^#/, '');
+    if (hash === 'results') { if (answeredCount() > 0) renderResults(); }
+    else if (/^q\d+$/.test(hash)) { renderQuestion(); }
+    else { updateProgress(); updateResumeRow(); }
+  });
 
   /* ============================================================ *
    *  QUIZ
